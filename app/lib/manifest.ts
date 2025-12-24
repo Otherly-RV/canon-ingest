@@ -12,8 +12,13 @@ export type ProjectManifest = {
 
   sourcePdf?: { url: string; filename: string };
 
+  // NEW: Document AI output pointer
+  extractedText?: { url: string };
+
   settings: ProjectSettings;
-  status: "empty" | "uploaded";
+
+  // NEW: include processed
+  status: "empty" | "uploaded" | "processed";
 };
 
 export function newManifest(projectId: string): ProjectManifest {
