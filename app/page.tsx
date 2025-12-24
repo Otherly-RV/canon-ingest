@@ -30,10 +30,7 @@ export default function Page() {
 
   async function loadManifest(url: string) {
     const mRes = await fetch(url, { cache: "no-store" });
-    if (!mRes.ok) {
-      const t = await readErrorText(mRes);
-      throw new Error(`Failed to fetch manifest: ${t}`);
-    }
+    if (!mRes.ok) throw new Error(`Failed to fetch manifest: ${await readErrorText(mRes)}`);
     const m = (await mRes.json()) as Manifest;
     setManifest(m);
     return m;
@@ -41,14 +38,10 @@ export default function Page() {
 
   async function createProject() {
     const r = await fetch("/api/projects/create", { method: "POST" });
-    if (!r.ok) {
-      const t = await readErrorText(r);
-      throw new Error(`Create project failed: ${t}`);
-    }
+    if (!r.ok) throw new Error(`Create project failed: ${await readErrorText(r)}`);
+
     const j = (await r.json()) as { ok: boolean; projectId?: string; manifestUrl?: string; error?: string };
-    if (!j.ok || !j.projectId || !j.manifestUrl) {
-      throw new Error(j.error || "Create project failed (bad response).");
-    }
+    if (!j.ok || !j.projectId || !j.manifestUrl) throw new Error(j.error || "Create project failed (bad response)");
 
     setProjectId(j.projectId);
     setManifestUrl(j.manifestUrl);
@@ -70,13 +63,10 @@ export default function Page() {
       form.append("manifestUrl", p.manifestUrl);
 
       const r = await fetch("/api/projects/upload-source", { method: "POST", body: form });
-      if (!r.ok) {
-        const t = await readErrorText(r);
-        throw new Error(`Upload failed: ${t}`);
-      }
+      if (!r.ok) throw new Error(`Upload failed: ${await readErrorText(r)}`);
 
-      const j = (await r.json()) as { ok: boolean; manifestUrl?: string; sourcePdfUrl?: string; error?: string };
-      if (!j.ok || !j.manifestUrl) throw new Error(j.error || "Upload failed (bad response).");
+      const j = (await r.json()) as { ok: boolean; manifestUrl?: string; error?: string };
+      if (!j.ok || !j.manifestUrl) throw new Error(j.error || "Upload failed (bad response)");
 
       setManifestUrl(j.manifestUrl);
       await loadManifest(j.manifestUrl);
@@ -88,33 +78,23 @@ export default function Page() {
   async function processPdf() {
     setLastError("");
 
-    if (!projectId || !manifestUrl) {
-      setLastError("Missing projectId/manifestUrl (upload a PDF first).");
-      return;
-    }
-    if (!manifest?.sourcePdf) {
-      setLastError("No source PDF found in manifest (upload a PDF first).");
-      return;
-    }
+    if (!projectId || !manifestUrl) return setLastError("Missing projectId/manifestUrl (upload a PDF first).");
+    if (!manifest?.sourcePdf) return setLastError("No source PDF in manifest (upload a PDF first).");
     if (busy) return;
 
     setBusy("Processing PDF with Document AI...");
 
     try {
-      // Force POST (fixes your 405 if something was calling it as GET)
       const r = await fetch("/api/projects/process", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ projectId, manifestUrl })
       });
 
-      if (!r.ok) {
-        const t = await readErrorText(r);
-        throw new Error(`Process failed (${r.status}): ${t}`);
-      }
+      if (!r.ok) throw new Error(`Process failed (${r.status}): ${await readErrorText(r)}`);
 
       const j = (await r.json()) as { ok: boolean; manifestUrl?: string; error?: string };
-      if (!j.ok || !j.manifestUrl) throw new Error(j.error || "Process failed (bad response).");
+      if (!j.ok || !j.manifestUrl) throw new Error(j.error || "Process failed (bad response)");
 
       setManifestUrl(j.manifestUrl);
       await loadManifest(j.manifestUrl);
@@ -135,8 +115,9 @@ export default function Page() {
 
         <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
           <button
-            onClick={() => fileRef.current?.click()}
+            type="button"
             disabled={!!busy}
+            onClick={() => fileRef.current?.click()}
             style={{
               border: "1px solid #000",
               background: "#fff",
@@ -149,8 +130,9 @@ export default function Page() {
           </button>
 
           <button
-            onClick={processPdf}
+            type="button"
             disabled={!manifest?.sourcePdf || !!busy}
+            onClick={() => void processPdf()}
             style={{
               border: "1px solid #000",
               background: manifest?.sourcePdf && !busy ? "#000" : "#fff",
@@ -185,27 +167,16 @@ export default function Page() {
         <div style={{ fontWeight: 800 }}>Cloud state</div>
 
         <div style={{ marginTop: 10, fontSize: 13 }}>
-          <div>
-            <span style={{ opacity: 0.7 }}>projectId:</span> {projectId || "—"}
-          </div>
+          <div><span style={{ opacity: 0.7 }}>projectId:</span> {projectId || "—"}</div>
+          <div style={{ marginTop: 6 }}><span style={{ opacity: 0.7 }}>status:</span> {manifest?.status || "—"}</div>
 
-          <div style={{ marginTop: 6 }}>
-            <span style={{ opacity: 0.7 }}>status:</span> {manifest?.status || "—"}
-          </div>
-
-          <div style={{ marginTop: 10 }}>
-            <span style={{ opacity: 0.7 }}>manifestUrl:</span>
-          </div>
+          <div style={{ marginTop: 10 }}><span style={{ opacity: 0.7 }}>manifestUrl:</span></div>
           <div style={{ fontSize: 12, wordBreak: "break-all" }}>{manifestUrl || "—"}</div>
 
-          <div style={{ marginTop: 10 }}>
-            <span style={{ opacity: 0.7 }}>sourcePdf:</span>
-          </div>
+          <div style={{ marginTop: 10 }}><span style={{ opacity: 0.7 }}>sourcePdf:</span></div>
           <div style={{ fontSize: 12, wordBreak: "break-all" }}>{manifest?.sourcePdf?.url || "—"}</div>
 
-          <div style={{ marginTop: 10 }}>
-            <span style={{ opacity: 0.7 }}>extractedText:</span>
-          </div>
+          <div style={{ marginTop: 10 }}><span style={{ opacity: 0.7 }}>extractedText:</span></div>
           <div style={{ fontSize: 12, wordBreak: "break-all" }}>{manifest?.extractedText?.url || "—"}</div>
         </div>
       </div>
