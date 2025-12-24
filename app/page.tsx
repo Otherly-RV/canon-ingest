@@ -10,6 +10,15 @@ type Manifest = {
   extractedText?: { url: string };
 };
 
+async function readErrorText(res: Response) {
+  try {
+    const t = await res.text();
+    return t || `${res.status} ${res.statusText}`;
+  } catch {
+    return `${res.status} ${res.statusText}`;
+  }
+}
+
 export default function Page() {
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -17,23 +26,39 @@ export default function Page() {
   const [projectId, setProjectId] = useState<string>("");
   const [manifestUrl, setManifestUrl] = useState<string>("");
   const [manifest, setManifest] = useState<Manifest | null>(null);
+  const [lastError, setLastError] = useState<string>("");
+
+  async function loadManifest(url: string) {
+    const mRes = await fetch(url, { cache: "no-store" });
+    if (!mRes.ok) {
+      const t = await readErrorText(mRes);
+      throw new Error(`Failed to fetch manifest: ${t}`);
+    }
+    const m = (await mRes.json()) as Manifest;
+    setManifest(m);
+    return m;
+  }
 
   async function createProject() {
     const r = await fetch("/api/projects/create", { method: "POST" });
-    const j = await r.json();
-    if (!j.ok) throw new Error("Create project failed");
+    if (!r.ok) {
+      const t = await readErrorText(r);
+      throw new Error(`Create project failed: ${t}`);
+    }
+    const j = (await r.json()) as { ok: boolean; projectId?: string; manifestUrl?: string; error?: string };
+    if (!j.ok || !j.projectId || !j.manifestUrl) {
+      throw new Error(j.error || "Create project failed (bad response).");
+    }
 
     setProjectId(j.projectId);
     setManifestUrl(j.manifestUrl);
+    await loadManifest(j.manifestUrl);
 
-    const mRes = await fetch(j.manifestUrl, { cache: "no-store" });
-    const m = (await mRes.json()) as Manifest;
-    setManifest(m);
-
-    return { projectId: j.projectId as string, manifestUrl: j.manifestUrl as string };
+    return { projectId: j.projectId, manifestUrl: j.manifestUrl };
   }
 
   async function uploadSource(file: File) {
+    setLastError("");
     setBusy("Uploading SOURCE (PDF) to Blob...");
 
     try {
@@ -45,40 +70,54 @@ export default function Page() {
       form.append("manifestUrl", p.manifestUrl);
 
       const r = await fetch("/api/projects/upload-source", { method: "POST", body: form });
-      const j = await r.json();
-      if (!j.ok) throw new Error(j.error || "Upload failed");
+      if (!r.ok) {
+        const t = await readErrorText(r);
+        throw new Error(`Upload failed: ${t}`);
+      }
+
+      const j = (await r.json()) as { ok: boolean; manifestUrl?: string; sourcePdfUrl?: string; error?: string };
+      if (!j.ok || !j.manifestUrl) throw new Error(j.error || "Upload failed (bad response).");
 
       setManifestUrl(j.manifestUrl);
-
-      const mRes = await fetch(j.manifestUrl, { cache: "no-store" });
-      const m = (await mRes.json()) as Manifest;
-      setManifest(m);
+      await loadManifest(j.manifestUrl);
     } finally {
       setBusy("");
     }
   }
 
   async function processPdf() {
-    if (!projectId || !manifestUrl) return;
-    if (!manifest?.sourcePdf) return;
+    setLastError("");
+
+    if (!projectId || !manifestUrl) {
+      setLastError("Missing projectId/manifestUrl (upload a PDF first).");
+      return;
+    }
+    if (!manifest?.sourcePdf) {
+      setLastError("No source PDF found in manifest (upload a PDF first).");
+      return;
+    }
+    if (busy) return;
 
     setBusy("Processing PDF with Document AI...");
 
     try {
+      // Force POST (fixes your 405 if something was calling it as GET)
       const r = await fetch("/api/projects/process", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ projectId, manifestUrl })
       });
 
-      const j = await r.json();
-      if (!j.ok) throw new Error(j.error || "Process failed");
+      if (!r.ok) {
+        const t = await readErrorText(r);
+        throw new Error(`Process failed (${r.status}): ${t}`);
+      }
+
+      const j = (await r.json()) as { ok: boolean; manifestUrl?: string; error?: string };
+      if (!j.ok || !j.manifestUrl) throw new Error(j.error || "Process failed (bad response).");
 
       setManifestUrl(j.manifestUrl);
-
-      const mRes = await fetch(j.manifestUrl, { cache: "no-store" });
-      const m = (await mRes.json()) as Manifest;
-      setManifest(m);
+      await loadManifest(j.manifestUrl);
     } finally {
       setBusy("");
     }
@@ -88,37 +127,37 @@ export default function Page() {
     <div style={{ minHeight: "100vh", padding: 28 }}>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 16 }}>
         <div>
-          <div style={{ fontSize: 22, fontWeight: 800, letterSpacing: -0.3 }}>
-            OTHERLY — Ingest
-          </div>
+          <div style={{ fontSize: 22, fontWeight: 800, letterSpacing: -0.3 }}>OTHERLY — Ingest</div>
           <div style={{ marginTop: 6, fontSize: 13, opacity: 0.75 }}>
-            Step 4: Process SOURCE PDF → Document AI text → store online in Blob
+            Upload SOURCE → Process (Document AI) → store extracted text online
           </div>
         </div>
 
         <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
           <button
             onClick={() => fileRef.current?.click()}
+            disabled={!!busy}
             style={{
               border: "1px solid #000",
               background: "#fff",
               padding: "10px 12px",
-              borderRadius: 12
+              borderRadius: 12,
+              opacity: busy ? 0.6 : 1
             }}
           >
             Upload SOURCE
           </button>
 
           <button
-            disabled={!manifest?.sourcePdf || busy !== ""}
             onClick={processPdf}
+            disabled={!manifest?.sourcePdf || !!busy}
             style={{
               border: "1px solid #000",
-              background: manifest?.sourcePdf ? "#000" : "#fff",
-              color: manifest?.sourcePdf ? "#fff" : "#000",
+              background: manifest?.sourcePdf && !busy ? "#000" : "#fff",
+              color: manifest?.sourcePdf && !busy ? "#fff" : "#000",
               padding: "10px 12px",
               borderRadius: 12,
-              opacity: manifest?.sourcePdf ? 1 : 0.4
+              opacity: manifest?.sourcePdf && !busy ? 1 : 0.4
             }}
           >
             Process
@@ -130,6 +169,13 @@ export default function Page() {
         <div style={{ marginTop: 18, border: "1px solid #000", borderRadius: 12, padding: 12 }}>
           <div style={{ fontWeight: 800 }}>Working</div>
           <div style={{ marginTop: 6, fontSize: 13, opacity: 0.8 }}>{busy}</div>
+        </div>
+      )}
+
+      {!!lastError && (
+        <div style={{ marginTop: 18, border: "1px solid #000", borderRadius: 12, padding: 12 }}>
+          <div style={{ fontWeight: 800 }}>Error</div>
+          <div style={{ marginTop: 6, fontSize: 13, whiteSpace: "pre-wrap" }}>{lastError}</div>
         </div>
       )}
 
@@ -173,7 +219,11 @@ export default function Page() {
           const f = e.target.files?.[0];
           e.target.value = "";
           if (!f) return;
-          await uploadSource(f);
+          try {
+            await uploadSource(f);
+          } catch (err) {
+            setLastError(err instanceof Error ? err.message : String(err));
+          }
         }}
       />
     </div>
