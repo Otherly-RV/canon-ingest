@@ -1,16 +1,30 @@
 import { DocumentProcessorServiceClient } from "@google-cloud/documentai";
+import type { protos } from "@google-cloud/documentai";
 
-function getServiceAccountJson() {
+function getServiceAccountJson(): { client_email: string; private_key: string } {
   const raw = process.env.GCP_SA_KEY_JSON;
   if (!raw) throw new Error("Missing GCP_SA_KEY_JSON");
 
-  // Vercel env often stores JSON with escaped newlines; parse normally.
-  // If someone pasted a JSON string with literal "\\n", JSON.parse will keep \n as real newlines in JS strings.
+  let parsed: unknown;
   try {
-    return JSON.parse(raw);
-  } catch (e) {
+    parsed = JSON.parse(raw) as unknown;
+  } catch {
     throw new Error("GCP_SA_KEY_JSON is not valid JSON (must be a single-line JSON object)");
   }
+
+  if (typeof parsed !== "object" || parsed === null) {
+    throw new Error("GCP_SA_KEY_JSON must be a JSON object");
+  }
+
+  const obj = parsed as Record<string, unknown>;
+  const client_email = obj["client_email"];
+  const private_key = obj["private_key"];
+
+  if (typeof client_email !== "string" || typeof private_key !== "string") {
+    throw new Error("GCP_SA_KEY_JSON must include string fields client_email and private_key");
+  }
+
+  return { client_email, private_key };
 }
 
 export type DocAIExtract = {
@@ -18,21 +32,22 @@ export type DocAIExtract = {
   pages: Array<{ pageNumber: number; text: string }>;
 };
 
-function sliceTextAnchors(fullText: string, textAnchor?: any) {
-  const segs = textAnchor?.textSegments ?? [];
-  if (!Array.isArray(segs) || segs.length === 0) return "";
+function sliceTextAnchors(
+  fullText: string,
+  anchors?: protos.google.cloud.documentai.v1.Document.ITextAnchor | null
+) {
+  const segments = anchors?.textSegments ?? [];
+  if (!segments.length) return "";
 
-  return segs
-    .map((s: any) => {
-      const start = Number(s.startIndex ?? 0);
-      const end = Number(s.endIndex ?? 0);
-      if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return "";
-      return fullText.slice(start, end);
-    })
-    .filter(Boolean)
-    .join(" ")
-    .replace(/\s+/g, " ")
-    .trim();
+  const parts: string[] = [];
+  for (const seg of segments) {
+    const start = Number(seg.startIndex ?? 0);
+    const end = Number(seg.endIndex ?? 0);
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) continue;
+    parts.push(fullText.slice(start, end));
+  }
+
+  return parts.join(" ").replace(/\s+/g, " ").trim();
 }
 
 export async function processWithDocAI(pdfBytes: Buffer): Promise<DocAIExtract> {
@@ -55,21 +70,22 @@ export async function processWithDocAI(pdfBytes: Buffer): Promise<DocAIExtract> 
 
   const name = `projects/${projectId}/locations/${location}/processors/${processorId}`;
 
-  const [result] = await client.processDocument({
+  const request: protos.google.cloud.documentai.v1.IProcessRequest = {
     name,
     rawDocument: {
       content: pdfBytes.toString("base64"),
       mimeType: "application/pdf"
     }
-  });
+  };
 
+  const [result] = await client.processDocument(request);
   const doc = result.document;
   if (!doc) throw new Error("Document AI returned no document");
 
   const fullText = doc.text ?? "";
-  const pages = (doc.pages ?? []).map((p: any, idx: number) => ({
+  const pages = (doc.pages ?? []).map((p, idx) => ({
     pageNumber: idx + 1,
-    text: sliceTextAnchors(fullText, p.layout?.textAnchor)
+    text: sliceTextAnchors(fullText, p.layout?.textAnchor ?? null)
   }));
 
   return { fullText, pages };
