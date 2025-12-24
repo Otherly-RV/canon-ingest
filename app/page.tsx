@@ -1,65 +1,122 @@
-import Image from "next/image";
+"use client";
 
-export default function Home() {
+import React, { useRef, useState } from "react";
+
+type Manifest = {
+  projectId: string;
+  createdAt: string;
+  status: "empty" | "uploaded";
+  sourcePdf?: { url: string; filename: string };
+};
+
+export default function Page() {
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const [busy, setBusy] = useState("");
+  const [projectId, setProjectId] = useState<string>("");
+  const [manifestUrl, setManifestUrl] = useState<string>("");
+  const [manifest, setManifest] = useState<Manifest | null>(null);
+
+  async function createProject() {
+    const r = await fetch("/api/projects/create", { method: "POST" });
+    const j = await r.json();
+    if (!j.ok) throw new Error("Create project failed");
+    setProjectId(j.projectId);
+    setManifestUrl(j.manifestUrl);
+
+    // fetch manifest back (simple)
+    const mRes = await fetch(j.manifestUrl, { cache: "no-store" });
+    const m = (await mRes.json()) as Manifest;
+    setManifest(m);
+    return { projectId: j.projectId as string, manifestUrl: j.manifestUrl as string };
+  }
+
+  async function uploadSource(file: File) {
+    setBusy("Uploading SOURCE (PDF) to Blob...");
+
+    try {
+      const p = projectId && manifestUrl ? { projectId, manifestUrl } : await createProject();
+
+      const form = new FormData();
+      form.append("file", file);
+      form.append("projectId", p.projectId);
+      form.append("manifestUrl", p.manifestUrl);
+
+      const r = await fetch("/api/projects/upload-source", { method: "POST", body: form });
+      const j = await r.json();
+      if (!j.ok) throw new Error(j.error || "Upload failed");
+
+      setManifestUrl(j.manifestUrl);
+
+      const mRes = await fetch(j.manifestUrl, { cache: "no-store" });
+      const m = (await mRes.json()) as Manifest;
+      setManifest(m);
+    } finally {
+      setBusy("");
+    }
+  }
+
   return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex min-h-screen w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+    <div style={{ minHeight: "100vh", padding: 28 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 16 }}>
+        <div>
+          <div style={{ fontSize: 22, fontWeight: 800, letterSpacing: -0.3 }}>
+            OTHERLY — Ingest
+          </div>
+          <div style={{ marginTop: 6, fontSize: 13, opacity: 0.75 }}>
+            Step 2: Upload SOURCE PDF → store online in Blob + manifest.json
+          </div>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
+
+        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+          <button
+            onClick={() => fileRef.current?.click()}
+            style={{
+              border: "1px solid #000",
+              background: "#fff",
+              padding: "10px 12px",
+              borderRadius: 12
+            }}
           >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+            Upload SOURCE
+          </button>
         </div>
-      </main>
+      </div>
+
+      {!!busy && (
+        <div style={{ marginTop: 18, border: "1px solid #000", borderRadius: 12, padding: 12 }}>
+          <div style={{ fontWeight: 800 }}>Working</div>
+          <div style={{ marginTop: 6, fontSize: 13, opacity: 0.8 }}>{busy}</div>
+        </div>
+      )}
+
+      <div style={{ marginTop: 18, borderTop: "1px solid rgba(0,0,0,0.2)" }} />
+
+      <div style={{ marginTop: 18, border: "1px solid #000", borderRadius: 12, padding: 14 }}>
+        <div style={{ fontWeight: 800 }}>Cloud state</div>
+
+        <div style={{ marginTop: 10, fontSize: 13 }}>
+          <div><span style={{ opacity: 0.7 }}>projectId:</span> {projectId || "—"}</div>
+          <div style={{ marginTop: 6 }}><span style={{ opacity: 0.7 }}>manifestUrl:</span></div>
+          <div style={{ fontSize: 12, wordBreak: "break-all" }}>{manifestUrl || "—"}</div>
+
+          <div style={{ marginTop: 10 }}><span style={{ opacity: 0.7 }}>sourcePdf:</span></div>
+          <div style={{ fontSize: 12, wordBreak: "break-all" }}>{manifest?.sourcePdf?.url || "—"}</div>
+        </div>
+      </div>
+
+      <input
+        ref={fileRef}
+        type="file"
+        accept="application/pdf"
+        style={{ display: "none" }}
+        onChange={async (e) => {
+          const f = e.target.files?.[0];
+          e.target.value = "";
+          if (!f) return;
+          await uploadSource(f);
+        }}
+      />
     </div>
   );
 }
