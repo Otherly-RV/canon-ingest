@@ -186,7 +186,7 @@ function Tabs({
 
 export default function Page() {
   const fileRef = useRef<HTMLInputElement>(null);
-
+const [deletingAssets, setDeletingAssets] = useState<Record<string, boolean>>({});
   const [busy, setBusy] = useState("");
   const [projectId, setProjectId] = useState<string>("");
   const [manifestUrl, setManifestUrl] = useState<string>("");
@@ -225,11 +225,24 @@ export default function Page() {
 async function deleteAsset(pageNumber: number, assetId: string, assetUrl: string) {
   if (!projectId || !manifestUrl) return;
 
-  const ok = window.confirm(`Delete asset ${assetId}?`);
-  if (!ok) return;
+  const key = `${pageNumber}-${assetId}`;
+  if (deletingAssets[key]) return; // hard lock
 
+  setDeletingAssets((m) => ({ ...m, [key]: true }));
   setLastError("");
-  setBusy("Deleting asset...");
+
+  // Optimistic remove from UI immediately
+  setManifest((prev) => {
+    if (!prev?.pages) return prev;
+    return {
+      ...prev,
+      pages: prev.pages.map((p) => {
+        if (p.pageNumber !== pageNumber) return p;
+        const assets = Array.isArray(p.assets) ? p.assets : [];
+        return { ...p, assets: assets.filter((a) => a.assetId !== assetId) };
+      })
+    };
+  });
 
   try {
     const r = await fetch("/api/projects/assets/delete", {
@@ -238,19 +251,23 @@ async function deleteAsset(pageNumber: number, assetId: string, assetUrl: string
       body: JSON.stringify({ projectId, manifestUrl, pageNumber, assetId, assetUrl })
     });
 
-    if (!r.ok) throw new Error(await readErrorText(r));
-
-    const j = (await r.json()) as { ok: boolean; manifestUrl?: string; error?: string };
-    if (!j.ok || !j.manifestUrl) throw new Error(j.error || "Delete asset failed");
+    const j = (await r.json().catch(() => null)) as { ok?: boolean; manifestUrl?: string; error?: string } | null;
+    if (!r.ok || !j?.ok || !j.manifestUrl) throw new Error(j?.error || `Delete failed (${r.status})`);
 
     setManifestUrl(j.manifestUrl);
     setUrlParams(projectId, j.manifestUrl);
     await loadManifest(j.manifestUrl);
     await refreshProjects();
   } catch (e) {
+    // If server failed, restore by reloading manifest (source of truth)
     setLastError(e instanceof Error ? e.message : String(e));
+    await loadManifest(manifestUrl);
   } finally {
-    setBusy("");
+    setDeletingAssets((m) => {
+      const copy = { ...m };
+      delete copy[key];
+      return copy;
+    });
   }
 }
   async function loadManifest(url: string) {
@@ -890,7 +907,7 @@ async function deleteAsset(pageNumber: number, assetId: string, assetUrl: string
             <button
               type="button"
               aria-label={`Delete ${asset.assetId}`}
-              disabled={!!busy}
+              disabled={!!busy || !!deletingAssets[`${pageNumber}-${asset.assetId}`]}
               onClick={() => void deleteAsset(pageNumber, asset.assetId, asset.url)}
               style={{
                 position: "absolute",
