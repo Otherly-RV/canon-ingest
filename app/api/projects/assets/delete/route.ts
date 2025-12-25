@@ -29,10 +29,7 @@ async function readErrorText(res: Response) {
 
 async function fetchManifest(manifestUrlRaw: string): Promise<ProjectManifest> {
   const url = baseUrl(manifestUrlRaw);
-  const res = await fetch(`${url}?v=${Date.now()}`, {
-    cache: "no-store",
-    headers: { "Cache-Control": "no-cache" }
-  });
+  const res = await fetch(`${url}?v=${Date.now()}`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Cannot fetch manifest (${res.status}): ${await readErrorText(res)}`);
   return (await res.json()) as ProjectManifest;
 }
@@ -60,10 +57,8 @@ export async function POST(req: Request): Promise<Response> {
       return NextResponse.json({ ok: false, error: "projectId does not match manifest" }, { status: 400 });
     }
 
-    // 1) delete blob by URL
     await del([assetUrl]);
 
-    // 2) remove asset from manifest
     if (Array.isArray(manifest.pages)) {
       const p = manifest.pages.find((x) => x.pageNumber === pageNumber);
       if (p && Array.isArray(p.assets)) {
@@ -72,7 +67,6 @@ export async function POST(req: Request): Promise<Response> {
     }
 
     const newManifestUrl = await saveManifest(manifest);
-
     return NextResponse.json({ ok: true, manifestUrl: newManifestUrl });
   } catch (e) {
     return NextResponse.json({ ok: false, error: e instanceof Error ? e.message : String(e) }, { status: 500 });
