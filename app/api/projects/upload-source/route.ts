@@ -20,7 +20,10 @@ async function fetchManifestIfExists(manifestUrlRaw: string): Promise<ProjectMan
       cache: "no-store",
       headers: { "Cache-Control": "no-cache" }
     });
-    if (!res.ok) return null; // <- IMPORTANT: 404 becomes "null", not an error
+
+    // IMPORTANT: treat 404/anything non-200 as "missing"
+    if (!res.ok) return null;
+
     const j = (await res.json()) as ProjectManifest;
     if (!j?.projectId) return null;
     return j;
@@ -43,7 +46,7 @@ export async function POST(req: Request): Promise<Response> {
     return NextResponse.json({ ok: false, error: "Missing projectId" }, { status: 400 });
   }
 
-  // 1) Upload PDF to Blob (overwrite stable path)
+  // 1) Upload PDF (overwrite stable path)
   const ab = await file.arrayBuffer();
   const source = await put(`projects/${projectId}/source/source.pdf`, ab, {
     access: "public",
@@ -51,19 +54,15 @@ export async function POST(req: Request): Promise<Response> {
     addRandomSuffix: false
   });
 
-  // 2) Try to load manifest from provided URL; if missing (404), recreate
+  // 2) Load manifest if it exists; otherwise recreate
   const existing = await fetchManifestIfExists(manifestUrlRaw);
   const manifest: ProjectManifest = existing ?? newManifest(projectId);
 
-  // 3) Update manifest
+  // 3) Update + save manifest
   manifest.sourcePdf = { url: source.url, filename: file.name };
   manifest.status = "uploaded";
 
   const newUrl = await saveManifest(manifest);
 
-  return NextResponse.json({
-    ok: true,
-    manifestUrl: newUrl,
-    sourcePdfUrl: source.url
-  });
+  return NextResponse.json({ ok: true, manifestUrl: newUrl, sourcePdfUrl: source.url });
 }
