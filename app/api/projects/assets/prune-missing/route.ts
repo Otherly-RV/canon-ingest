@@ -27,19 +27,12 @@ async function fetchManifest(manifestUrlRaw: string): Promise<ProjectManifest> {
   return (await res.json()) as ProjectManifest;
 }
 
-/**
- * Blob public URLs can be strict about HEAD/Range behavior.
- * This function is defensive: it only removes an asset when we are CERTAIN it's 404.
- */
 async function existsDefinitely(url: string): Promise<"exists" | "missing" | "unknown"> {
   const u = `${baseUrl(url)}?v=${Date.now()}`;
-
-  // Try GET (not HEAD) because some CDNs/providers behave oddly on HEAD.
   try {
     const res = await fetch(u, { method: "GET", cache: "no-store" });
     if (res.status === 404) return "missing";
     if (res.ok) return "exists";
-    // Any other status: don't assume missing
     return "unknown";
   } catch {
     return "unknown";
@@ -77,11 +70,10 @@ export async function POST(req: Request): Promise<Response> {
         const keep: typeof p.assets = [];
         for (const a of p.assets) {
           checked += 1;
-          const status = await existsDefinitely(a.url);
-
-          if (status === "missing") removed += 1;
+          const st = await existsDefinitely(a.url);
+          if (st === "missing") removed += 1;
           else {
-            if (status === "unknown") unknown += 1;
+            if (st === "unknown") unknown += 1;
             keep.push(a);
           }
         }
@@ -92,8 +84,6 @@ export async function POST(req: Request): Promise<Response> {
     const newManifestUrl = await saveManifest(manifest);
     return NextResponse.json({ ok: true, manifestUrl: newManifestUrl, checked, removed, unknown });
   } catch (e) {
-    // Return the real message so you can act on it
-    const msg = e instanceof Error ? e.message : String(e);
-    return NextResponse.json({ ok: false, error: msg }, { status: 500 });
+    return NextResponse.json({ ok: false, error: e instanceof Error ? e.message : String(e) }, { status: 500 });
   }
 }
