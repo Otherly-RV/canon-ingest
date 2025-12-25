@@ -490,92 +490,117 @@ async function deleteAsset(pageNumber: number, assetId: string, assetUrl: string
     setUrlParams(projectId, j.manifestUrl);
     await loadManifest(j.manifestUrl);
   }
+async function recordAssetsBulk(pageNumber: number, assets: Array<{ assetId: string; url: string; bbox: AssetBBox }>) {
+  const r = await fetch("/api/projects/assets/record-bulk", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ projectId, manifestUrl, pageNumber, assets })
+  });
 
-  async function splitImages() {
-    setLastError("");
+  if (!r.ok) throw new Error(await readErrorText(r));
 
-    if (!projectId || !manifestUrl) return setLastError("Missing projectId/manifestUrl");
-    if (!manifest?.docAiJson?.url) return setLastError("No DocAI JSON");
-    if (!manifest.pages?.length) return setLastError("No page PNGs");
-    if (busy || splitProgress.running) return;
+  const j = (await r.json()) as { ok: boolean; manifestUrl?: string; error?: string };
+  if (!j.ok || !j.manifestUrl) throw new Error(j.error || "Record bulk failed (bad response)");
 
-    setBusy("Splitting...");
-    setSplitProgress({ running: true, page: 0, totalPages: manifest.pages.length, assetsUploaded: 0 });
+  setManifestUrl(j.manifestUrl);
+  setUrlParams(projectId, j.manifestUrl);
+  await loadManifest(j.manifestUrl);
+}
+async function splitImages() {
+  setLastError("");
 
-    try {
-      const detectRes = await fetch("/api/projects/assets/detect", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectId, manifestUrl })
+  if (!projectId || !manifestUrl) return setLastError("Missing projectId/manifestUrl");
+  if (!manifest?.docAiJson?.url) return setLastError("No DocAI JSON");
+  if (!manifest.pages?.length) return setLastError("No page PNGs");
+  if (busy || splitProgress.running) return;
+
+  setBusy("Splitting...");
+  setSplitProgress({ running: true, page: 0, totalPages: manifest.pages.length, assetsUploaded: 0 });
+
+  try {
+    const detectRes = await fetch("/api/projects/assets/detect", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ projectId, manifestUrl })
+    });
+
+    if (!detectRes.ok) throw new Error(await readErrorText(detectRes));
+
+    const detected = (await detectRes.json()) as {
+      ok: boolean;
+      pages?: Array<{ pageNumber: number; boxes: AssetBBox[] }>;
+      error?: string;
+    };
+
+    if (!detected.ok || !Array.isArray(detected.pages)) throw new Error(detected.error || "Detect failed (bad response)");
+
+    const byPage = new Map<number, AssetBBox[]>();
+    for (const p of detected.pages) {
+      byPage.set(p.pageNumber, Array.isArray(p.boxes) ? p.boxes : []);
+    }
+
+    // Use the current manifest state for page URLs/sizes
+    const pages = manifest.pages;
+
+    for (const page of pages) {
+      setSplitProgress((s) => ({ ...s, page: page.pageNumber }));
+
+      const boxes = byPage.get(page.pageNumber) ?? [];
+      if (boxes.length === 0) continue;
+
+      const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+        const el = new Image();
+        el.crossOrigin = "anonymous";
+        el.onload = () => resolve(el);
+        el.onerror = () => reject(new Error(`Failed to load page image p${page.pageNumber}`));
+        el.src = bust(page.url);
       });
 
-      if (!detectRes.ok) throw new Error(await readErrorText(detectRes));
+      const uploadedForPage: Array<{ assetId: string; url: string; bbox: AssetBBox }> = [];
 
-      const detected = (await detectRes.json()) as {
-        ok: boolean;
-        pages?: Array<{ pageNumber: number; boxes: AssetBBox[] }>;
-        error?: string;
-      };
+      for (let i = 0; i < boxes.length; i++) {
+        const b = boxes[i];
 
-      if (!detected.ok || !Array.isArray(detected.pages)) throw new Error(detected.error || "Detect failed (bad response)");
+        const canvas = document.createElement("canvas");
+        const ctx = canvas.getContext("2d");
+        if (!ctx) throw new Error("Cannot create canvas 2D context");
 
-      const byPage = new Map<number, AssetBBox[]>();
-      for (const p of detected.pages) byPage.set(p.pageNumber, Array.isArray(p.boxes) ? p.boxes : []);
+        canvas.width = Math.max(1, Math.floor(b.w));
+        canvas.height = Math.max(1, Math.floor(b.h));
 
-      const pages = manifest.pages;
+        ctx.drawImage(img, b.x, b.y, b.w, b.h, 0, 0, canvas.width, canvas.height);
 
-      for (const page of pages) {
-        setSplitProgress((s) => ({ ...s, page: page.pageNumber }));
-
-        const boxes = byPage.get(page.pageNumber) ?? [];
-        if (boxes.length === 0) continue;
-
-        const img = await new Promise<HTMLImageElement>((resolve, reject) => {
-          const el = new Image();
-          el.crossOrigin = "anonymous";
-          el.onload = () => resolve(el);
-          el.onerror = () => reject(new Error(`Failed to load page image p${page.pageNumber}`));
-          el.src = bust(page.url);
+        const pngBlob = await new Promise<Blob>((resolve, reject) => {
+          canvas.toBlob((bb) => (bb ? resolve(bb) : reject(new Error("toBlob returned null"))), "image/png");
         });
 
-        for (let i = 0; i < boxes.length; i++) {
-          const b = boxes[i];
+        const assetId = `p${page.pageNumber}-img${String(i + 1).padStart(2, "0")}`;
+        const file = new File([pngBlob], `${assetId}.png`, { type: "image/png" });
 
-          const canvas = document.createElement("canvas");
-          const ctx = canvas.getContext("2d");
-          if (!ctx) throw new Error("Cannot create canvas 2D context");
+        const uploaded = await upload(`projects/${projectId}/assets/p${page.pageNumber}/${assetId}.png`, file, {
+          access: "public",
+          handleUploadUrl: "/api/blob"
+        });
 
-          canvas.width = Math.max(1, Math.floor(b.w));
-          canvas.height = Math.max(1, Math.floor(b.h));
+        uploadedForPage.push({ assetId, url: uploaded.url, bbox: b });
 
-          ctx.drawImage(img, b.x, b.y, b.w, b.h, 0, 0, canvas.width, canvas.height);
-
-          const pngBlob = await new Promise<Blob>((resolve, reject) => {
-            canvas.toBlob((bb) => (bb ? resolve(bb) : reject(new Error("toBlob returned null"))), "image/png");
-          });
-
-          const assetId = `p${page.pageNumber}-img${String(i + 1).padStart(2, "0")}`;
-          const file = new File([pngBlob], `${assetId}.png`, { type: "image/png" });
-
-          const uploaded = await upload(`projects/${projectId}/assets/p${page.pageNumber}/${assetId}.png`, file, {
-            access: "public",
-            handleUploadUrl: "/api/blob"
-          });
-
-          await recordAsset(page.pageNumber, assetId, uploaded.url, b);
-
-          setSplitProgress((s) => ({ ...s, assetsUploaded: s.assetsUploaded + 1 }));
-        }
+        setSplitProgress((s) => ({ ...s, assetsUploaded: s.assetsUploaded + 1 }));
       }
 
-      await refreshProjects();
-    } catch (e) {
-      setLastError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy("");
-      setSplitProgress((s) => ({ ...s, running: false }));
+      // ✅ single manifest write per page
+      if (uploadedForPage.length > 0) {
+        await recordAssetsBulk(page.pageNumber, uploadedForPage);
+      }
     }
+
+    await refreshProjects();
+  } catch (e) {
+    setLastError(e instanceof Error ? e.message : String(e));
+  } finally {
+    setBusy("");
+    setSplitProgress((s) => ({ ...s, running: false }));
   }
+}
 
   async function tagImages() {
     setLastError("");
