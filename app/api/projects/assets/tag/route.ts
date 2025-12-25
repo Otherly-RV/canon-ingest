@@ -7,8 +7,33 @@ export const dynamic = "force-dynamic";
 type Body = {
   projectId?: string;
   manifestUrl?: string;
-  limitAssets?: number; // optional
+  limitAssets?: number; // optional safety
+  overwrite?: boolean; // optional: retag even if tags exist
 };
+
+type DocAiRaw = {
+  document?: {
+    text?: string;
+    pages?: Array<{
+      layout?: {
+        textAnchor?: {
+          textSegments?: Array<{ startIndex?: number; endIndex?: number }>;
+        };
+      };
+    }>;
+  };
+};
+
+type TaggingResult = {
+  tags: string[];
+  rationale: string;
+};
+
+function getEnv(name: string): string {
+  const v = process.env[name];
+  if (!v) throw new Error(`Missing ${name}`);
+  return v;
+}
 
 function baseUrl(u: string) {
   const url = new URL(u);
@@ -27,25 +52,6 @@ async function fetchJson<T>(urlRaw: string): Promise<T> {
 
 async function fetchManifest(manifestUrlRaw: string): Promise<ProjectManifest> {
   return await fetchJson<ProjectManifest>(manifestUrlRaw);
-}
-
-type DocAiRaw = {
-  document?: {
-    text?: string;
-    pages?: Array<{
-      layout?: {
-        textAnchor?: {
-          textSegments?: Array<{ startIndex?: number; endIndex?: number }>;
-        };
-      };
-    }>;
-  };
-};
-
-function getEnv(name: string): string {
-  const v = process.env[name];
-  if (!v) throw new Error(`Missing ${name}`);
-  return v;
 }
 
 function sliceTextByAnchor(
@@ -73,101 +79,130 @@ function pageTextFromDocAi(raw: DocAiRaw, pageNumber1Based: number): string {
   return sliceTextByAnchor(fullText, page.layout?.textAnchor);
 }
 
-type TaggingResult = {
-  tags: string[];
-  rationale: string;
-};
+function toBase64(buf: ArrayBuffer): string {
+  return Buffer.from(buf).toString("base64");
+}
 
-async function callOpenAiTagger(args: {
+function extractFirstJsonObject(s: string): string | null {
+  const start = s.indexOf("{");
+  if (start < 0) return null;
+  let depth = 0;
+  for (let i = start; i < s.length; i++) {
+    const c = s[i];
+    if (c === "{") depth++;
+    if (c === "}") depth--;
+    if (depth === 0) return s.slice(start, i + 1);
+  }
+  return null;
+}
+
+function normalizeTags(tags: string[]): string[] {
+  return Array.from(
+    new Set(
+      tags
+        .map((t) => String(t).trim())
+        .filter(Boolean)
+        .map((t) => t.toLowerCase())
+    )
+  );
+}
+
+async function callGeminiTagger(args: {
   aiRules: string;
   taggingJson: string;
   pageText: string;
-  assetId: string;
   pageNumber: number;
+  assetId: string;
   imageUrl: string;
 }): Promise<TaggingResult> {
-  const apiKey = getEnv("OPENAI_API_KEY");
-  const model = process.env.OPENAI_MODEL || "gpt-4.1-mini";
+  const apiKey = getEnv("GEMINI_API_KEY");
+  const model = process.env.GEMINI_MODEL || "gemini-1.5-pro";
 
-  const system = `You are an internal image tagging engine.
-Return ONLY valid JSON. No markdown. No extra keys.`;
+  // Fetch the PNG (real vision input)
+  const imgRes = await fetch(`${baseUrl(args.imageUrl)}?v=${Date.now()}`, { cache: "no-store" });
+  if (!imgRes.ok) throw new Error(`Cannot fetch image (${imgRes.status})`);
+  const imgBuf = await imgRes.arrayBuffer();
+  const imgB64 = toBase64(imgBuf);
 
-  const userObj = {
+  const system = `Return ONLY valid JSON with keys: "tags" (array of strings) and "rationale" (string). No markdown. No extra keys.`;
+
+  // We keep your taggingJson “as rules” but the model must obey it.
+  const promptObj = {
     aiRules: args.aiRules,
     taggingJson: args.taggingJson,
     context: {
       pageNumber: args.pageNumber,
       assetId: args.assetId,
-      imageUrl: args.imageUrl,
       pageText: args.pageText
     },
-    task:
-      "Generate concise, reusable tags for this image asset. Tags must be coherent with pageText. Prefer stable nouns/adjectives. Avoid duplicates."
+    instruction:
+      "Generate concise, reusable tags for the IMAGE. Tags must be coherent with pageText. Prefer stable nouns/adjectives useful for retrieval and later LoRA training. Avoid duplicates and overly generic tags."
   };
 
-  const schema = {
-    name: "asset_tags",
-    schema: {
-      type: "object",
-      additionalProperties: false,
-      properties: {
-        tags: { type: "array", items: { type: "string" }, minItems: 1 },
-        rationale: { type: "string" }
-      },
-      required: ["tags", "rationale"]
-    }
-  } as const;
+  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
+    model
+  )}:generateContent?key=${encodeURIComponent(apiKey)}`;
 
-  const resp = await fetch("https://api.openai.com/v1/responses", {
+  const body = {
+    contents: [
+      {
+        role: "user",
+        parts: [
+          { text: system },
+          { text: JSON.stringify(promptObj) },
+          {
+            inlineData: {
+              mimeType: "image/png",
+              data: imgB64
+            }
+          }
+        ]
+      }
+    ],
+    generationConfig: {
+      temperature: 0.2,
+      maxOutputTokens: 512,
+      responseMimeType: "application/json"
+    }
+  };
+
+  const resp = await fetch(endpoint, {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      model,
-      input: [
-        { role: "system", content: [{ type: "text", text: system }] },
-        { role: "user", content: [{ type: "text", text: JSON.stringify(userObj) }] }
-      ],
-      response_format: { type: "json_schema", json_schema: schema }
-    })
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body)
   });
 
   if (!resp.ok) {
     const t = await resp.text().catch(() => "");
-    throw new Error(`OpenAI error (${resp.status}): ${t || resp.statusText}`);
+    throw new Error(`Gemini error (${resp.status}): ${t || resp.statusText}`);
   }
 
   const data = (await resp.json()) as unknown;
-  const outText =
-    typeof (data as { output_text?: unknown }).output_text === "string"
-      ? ((data as { output_text: string }).output_text as string)
-      : "";
 
-  if (!outText) throw new Error("OpenAI returned no output_text");
+  // Try to read the first candidate text
+  const text =
+    (data as { candidates?: Array<{ content?: { parts?: Array<{ text?: unknown }> } }> }).candidates?.[0]?.content
+      ?.parts?.map((p) => (typeof p.text === "string" ? p.text : ""))
+      .join("") || "";
+
+  if (!text) throw new Error("Gemini returned empty response text");
+
+  // Expect JSON; fallback to extracting first {...}
+  const jsonStr = text.trim().startsWith("{") ? text.trim() : extractFirstJsonObject(text);
+  if (!jsonStr) throw new Error("Gemini returned non-JSON output");
 
   let parsed: TaggingResult;
   try {
-    parsed = JSON.parse(outText) as TaggingResult;
+    parsed = JSON.parse(jsonStr) as TaggingResult;
   } catch {
-    throw new Error("OpenAI returned non-JSON output");
+    throw new Error("Gemini returned invalid JSON");
   }
 
   if (!parsed || !Array.isArray(parsed.tags) || parsed.tags.length === 0 || typeof parsed.rationale !== "string") {
     throw new Error("Invalid tagger JSON shape");
   }
 
-  const tags = Array.from(
-    new Set(
-      parsed.tags
-        .map((s) => String(s).trim())
-        .filter(Boolean)
-        .map((s) => s.toLowerCase())
-    )
-  );
-
-  return { tags, rationale: parsed.rationale.trim() };
+  return { tags: normalizeTags(parsed.tags), rationale: parsed.rationale.trim() };
 }
 
 export async function POST(req: Request): Promise<Response> {
@@ -181,6 +216,7 @@ export async function POST(req: Request): Promise<Response> {
   const projectId = String(body.projectId || "").trim();
   const manifestUrl = String(body.manifestUrl || "").trim();
   const limitAssets = Math.max(0, Number(body.limitAssets ?? 0));
+  const overwrite = Boolean(body.overwrite ?? false);
 
   if (!projectId || !manifestUrl) {
     return NextResponse.json({ ok: false, error: "Missing projectId/manifestUrl" }, { status: 400 });
@@ -192,11 +228,11 @@ export async function POST(req: Request): Promise<Response> {
   }
 
   if (!manifest.docAiJson?.url) {
-    return NextResponse.json({ ok: false, error: "Missing docAiJson.url" }, { status: 400 });
+    return NextResponse.json({ ok: false, error: "Missing docAiJson.url (run Process Text first)" }, { status: 400 });
   }
 
   if (!Array.isArray(manifest.pages) || manifest.pages.length === 0) {
-    return NextResponse.json({ ok: false, error: "No pages found" }, { status: 400 });
+    return NextResponse.json({ ok: false, error: "No pages found (run Rasterize + Split first)" }, { status: 400 });
   }
 
   const raw = await fetchJson<DocAiRaw>(manifest.docAiJson.url);
@@ -204,8 +240,8 @@ export async function POST(req: Request): Promise<Response> {
   const aiRules = manifest.settings?.aiRules ?? "";
   const taggingJson = manifest.settings?.taggingJson ?? "{}";
 
-  let tagged = 0;
   let scanned = 0;
+  let tagged = 0;
 
   for (const page of manifest.pages) {
     if (!Array.isArray(page.assets) || page.assets.length === 0) continue;
@@ -216,20 +252,20 @@ export async function POST(req: Request): Promise<Response> {
       scanned += 1;
       if (limitAssets > 0 && scanned > limitAssets) break;
 
-      if (Array.isArray(asset.tags) && asset.tags.length > 0) continue;
+      const alreadyTagged = Array.isArray(asset.tags) && asset.tags.length > 0;
+      if (alreadyTagged && !overwrite) continue;
 
-      const result = await callOpenAiTagger({
+      const res = await callGeminiTagger({
         aiRules,
         taggingJson,
         pageText,
-        assetId: asset.assetId,
         pageNumber: page.pageNumber,
+        assetId: asset.assetId,
         imageUrl: asset.url
       });
 
-      asset.tags = result.tags;
-      asset.tagRationale = result.rationale;
-
+      asset.tags = res.tags;
+      asset.tagRationale = res.rationale;
       tagged += 1;
     }
 
@@ -238,5 +274,5 @@ export async function POST(req: Request): Promise<Response> {
 
   const newManifestUrl = await saveManifest(manifest);
 
-  return NextResponse.json({ ok: true, manifestUrl: newManifestUrl, tagged, scanned });
+  return NextResponse.json({ ok: true, manifestUrl: newManifestUrl, scanned, tagged });
 }
