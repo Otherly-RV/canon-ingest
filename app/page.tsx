@@ -41,6 +41,20 @@ function bust(url: string) {
   return u.toString();
 }
 
+function setPdfJsWorker(pdfjs: unknown) {
+  // pdfjs-dist typing is messy across versions; do a safe runtime assignment
+  const lib = pdfjs as {
+    GlobalWorkerOptions?: { workerSrc: string };
+  };
+
+  if (!lib.GlobalWorkerOptions) return;
+
+  lib.GlobalWorkerOptions.workerSrc = new URL(
+    "pdfjs-dist/build/pdf.worker.min.mjs",
+    import.meta.url
+  ).toString();
+}
+
 export default function Page() {
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -74,7 +88,6 @@ export default function Page() {
       setManifestUrl(m);
       loadManifest(m).catch((e) => setLastError(e instanceof Error ? e.message : String(e)));
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function createProject() {
@@ -161,32 +174,21 @@ export default function Page() {
 
     try {
       const pdfjs = await import("pdfjs-dist");
+      setPdfJsWorker(pdfjs);
 
-      // Use bundled worker (no CDN)
-      // @ts-expect-error - pdfjs-dist exposes GlobalWorkerOptions at runtime
-      pdfjs.GlobalWorkerOptions.workerSrc = new URL(
-        // @ts-expect-error - worker module path is provided by pdfjs-dist
-        "pdfjs-dist/build/pdf.worker.min.mjs",
-        import.meta.url
-      ).toString();
-
-      const loadingTask = pdfjs.getDocument({
-        url: manifest.sourcePdf.url,
-        withCredentials: false
-      });
+      const loadingTask = (pdfjs as unknown as { getDocument: (opts: { url: string }) => { promise: Promise<any> } })
+        .getDocument({ url: manifest.sourcePdf.url });
 
       const pdf = await loadingTask.promise;
-      const totalPages = pdf.numPages;
+      const totalPages = Number(pdf.numPages) || 0;
 
       setRasterProgress((p) => ({ ...p, totalPages }));
 
-      // Sequential render/upload to avoid freezing and huge RAM
       for (let pageNumber = 1; pageNumber <= totalPages; pageNumber++) {
         setRasterProgress((p) => ({ ...p, currentPage: pageNumber }));
 
         const page = await pdf.getPage(pageNumber);
 
-        // Tune scale here (2.0 is a good balance for 50 pages)
         const scale = 2.0;
         const viewport = page.getViewport({ scale });
 
@@ -219,11 +221,8 @@ export default function Page() {
         const j = (await r.json()) as { ok: boolean; manifestUrl?: string; error?: string };
         if (!j.ok || !j.manifestUrl) throw new Error(j.error || `Upload page ${pageNumber} failed (bad response)`);
 
-        // Update manifestUrl as it evolves
         setManifestUrl(j.manifestUrl);
         setUrlParams(projectId, j.manifestUrl);
-
-        // Refresh manifest (cache-busted) so Cloud state is live
         await loadManifest(j.manifestUrl);
 
         setRasterProgress((p) => ({ ...p, uploaded: p.uploaded + 1 }));
@@ -315,7 +314,6 @@ export default function Page() {
 
       <div style={{ marginTop: 18, borderTop: "1px solid rgba(0,0,0,0.2)" }} />
 
-      {/* Cloud state (always there) */}
       <div style={{ marginTop: 18, border: "1px solid #000", borderRadius: 12 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: 14 }}>
           <div style={{ fontWeight: 800 }}>Cloud state</div>
