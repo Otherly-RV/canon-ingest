@@ -29,6 +29,13 @@ export type PageImage = {
   // NEW: cropped image assets extracted from this page
   assets?: PageAsset[];
 
+  // NEW: tombstones.
+  // Some routes (tagging / record-bulk / rebuild-index) historically fetched a
+  // manifest, did work for a while, then saved it back. If a user deleted an
+  // asset during that window, the old manifest write would "resurrect" it.
+  // We keep a per-page list of deleted assetIds so later saves can respect it.
+  deletedAssetIds?: string[];
+
   // Optional fallback (older flow)
   tags?: string[];
 };
