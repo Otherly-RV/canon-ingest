@@ -107,7 +107,7 @@ function normalizeTags(tags: string[]): string[] {
   );
 }
 
-async function callGeminiTagger(args: {
+async function callTagger(args: {
   aiRules: string;
   taggingJson: string;
   pageText: string;
@@ -116,7 +116,7 @@ async function callGeminiTagger(args: {
   imageUrl: string;
 }): Promise<TaggingResult> {
   const apiKey = getEnv("GEMINI_API_KEY");
-  const model = process.env.GEMINI_MODEL || "gemini-1.5-pro";
+  const model = "gemini-2.5-pro";
 
   // Fetch the PNG (real vision input)
   const imgRes = await fetch(`${baseUrl(args.imageUrl)}?v=${Date.now()}`, { cache: "no-store" });
