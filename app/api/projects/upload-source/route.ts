@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { put } from "@vercel/blob";
-import { saveManifest, type ProjectManifest } from "@/app/lib/manifest";
+import { newManifest, saveManifest, type ProjectManifest } from "@/app/lib/manifest";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -10,48 +10,60 @@ function baseUrl(u: string) {
   return `${url.origin}${url.pathname}`;
 }
 
-export async function POST(req: Request) {
-  const form = await req.formData();
-  const file = form.get("file");
-  const projectId = String(form.get("projectId") || "");
-  const manifestUrlRaw = String(form.get("manifestUrl") || "");
+async function fetchManifestIfExists(manifestUrlRaw: string): Promise<ProjectManifest | null> {
+  const trimmed = manifestUrlRaw.trim();
+  if (!trimmed) return null;
 
-  if (!projectId || !manifestUrlRaw) {
-    return NextResponse.json({ ok: false, error: "Missing projectId/manifestUrl" }, { status: 400 });
+  try {
+    const url = baseUrl(trimmed);
+    const res = await fetch(`${url}?v=${Date.now()}`, {
+      cache: "no-store",
+      headers: { "Cache-Control": "no-cache" }
+    });
+    if (!res.ok) return null; // <- IMPORTANT: 404 becomes "null", not an error
+    const j = (await res.json()) as ProjectManifest;
+    if (!j?.projectId) return null;
+    return j;
+  } catch {
+    return null;
   }
+}
+
+export async function POST(req: Request): Promise<Response> {
+  const form = await req.formData();
+
+  const file = form.get("file");
+  const projectId = String(form.get("projectId") || "").trim();
+  const manifestUrlRaw = String(form.get("manifestUrl") || "").trim();
+
   if (!(file instanceof File)) {
     return NextResponse.json({ ok: false, error: "Missing file" }, { status: 400 });
   }
-
-  // Always fetch manifest with cache-bust
-  const manifestUrl = baseUrl(manifestUrlRaw);
-  const mRes = await fetch(`${manifestUrl}?v=${Date.now()}`, {
-    cache: "no-store",
-    headers: { "Cache-Control": "no-cache" }
-  });
-
-  if (!mRes.ok) {
-    return NextResponse.json({ ok: false, error: `Cannot fetch manifest (${mRes.status})` }, { status: 400 });
+  if (!projectId) {
+    return NextResponse.json({ ok: false, error: "Missing projectId" }, { status: 400 });
   }
 
-  const manifest = (await mRes.json()) as ProjectManifest;
-
-  // Store SOURCE PDF in Blob
+  // 1) Upload PDF to Blob (overwrite stable path)
   const ab = await file.arrayBuffer();
-  const pdfBlob = await put(`projects/${projectId}/source/${file.name}`, ab, {
+  const source = await put(`projects/${projectId}/source/source.pdf`, ab, {
     access: "public",
     contentType: "application/pdf",
     addRandomSuffix: false
   });
 
-  manifest.sourcePdf = { url: pdfBlob.url, filename: file.name };
+  // 2) Try to load manifest from provided URL; if missing (404), recreate
+  const existing = await fetchManifestIfExists(manifestUrlRaw);
+  const manifest: ProjectManifest = existing ?? newManifest(projectId);
+
+  // 3) Update manifest
+  manifest.sourcePdf = { url: source.url, filename: file.name };
   manifest.status = "uploaded";
 
-  const newManifestUrl = await saveManifest(manifest);
+  const newUrl = await saveManifest(manifest);
 
   return NextResponse.json({
     ok: true,
-    sourcePdfUrl: pdfBlob.url,
-    manifestUrl: newManifestUrl
+    manifestUrl: newUrl,
+    sourcePdfUrl: source.url
   });
 }
