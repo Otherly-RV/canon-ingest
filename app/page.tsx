@@ -12,14 +12,22 @@ type Manifest = {
   pages?: Array<{ pageNumber: number; url: string; width: number; height: number }>;
 };
 
+type ProjectRow = {
+  projectId: string;
+  manifestUrl: string;
+  createdAt: string;
+  status: string;
+  filename: string;
+  pagesCount: number;
+  hasText: boolean;
+};
+
 type PdfJsLib = {
   getDocument: (opts: { url: string; withCredentials?: boolean }) => PdfLoadingTask;
   GlobalWorkerOptions?: { workerSrc: string };
 };
 
-type PdfLoadingTask = {
-  promise: Promise<PdfDocument>;
-};
+type PdfLoadingTask = { promise: Promise<PdfDocument> };
 
 type PdfDocument = {
   numPages: number;
@@ -31,10 +39,7 @@ type PdfPage = {
   render: (opts: { canvasContext: CanvasRenderingContext2D; viewport: PdfViewport }) => { promise: Promise<void> };
 };
 
-type PdfViewport = {
-  width: number;
-  height: number;
-};
+type PdfViewport = { width: number; height: number };
 
 async function readErrorText(res: Response) {
   try {
@@ -85,6 +90,34 @@ function Chevron({ up }: { up: boolean }) {
   );
 }
 
+function Trash() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path
+        d="M4 7h16M10 11v7M14 11v7M9 7l1-2h4l1 2M6 7l1 14h10l1-14"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function Refresh() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path
+        d="M21 12a9 9 0 10-3 6.7M21 12v-6m0 6h-6"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 export default function Page() {
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -95,6 +128,10 @@ export default function Page() {
   const [lastError, setLastError] = useState<string>("");
 
   const [cloudOpen, setCloudOpen] = useState(true);
+
+  const [projectsOpen, setProjectsOpen] = useState(true);
+  const [projectsBusy, setProjectsBusy] = useState(false);
+  const [projects, setProjects] = useState<ProjectRow[]>([]);
 
   const [rasterProgress, setRasterProgress] = useState<{
     running: boolean;
@@ -111,6 +148,21 @@ export default function Page() {
     return m;
   }
 
+  async function refreshProjects() {
+    setProjectsBusy(true);
+    try {
+      const r = await fetch("/api/projects/list", { cache: "no-store" });
+      if (!r.ok) throw new Error(await readErrorText(r));
+      const j = (await r.json()) as { ok: boolean; projects?: ProjectRow[]; error?: string };
+      if (!j.ok || !Array.isArray(j.projects)) throw new Error(j.error || "Bad /list response");
+      setProjects(j.projects);
+    } catch (e) {
+      setLastError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setProjectsBusy(false);
+    }
+  }
+
   useEffect(() => {
     const { pid, m } = getUrlParams();
     if (pid && m) {
@@ -118,6 +170,8 @@ export default function Page() {
       setManifestUrl(m);
       loadManifest(m).catch((e) => setLastError(e instanceof Error ? e.message : String(e)));
     }
+    refreshProjects().catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function createProject() {
@@ -131,6 +185,7 @@ export default function Page() {
     setManifestUrl(j.manifestUrl);
     setUrlParams(j.projectId, j.manifestUrl);
     await loadManifest(j.manifestUrl);
+    await refreshProjects();
 
     return { projectId: j.projectId, manifestUrl: j.manifestUrl };
   }
@@ -158,6 +213,8 @@ export default function Page() {
 
       const m = await loadManifest(j.manifestUrl);
       if (!m.sourcePdf?.url) throw new Error("Upload finished but manifest has no sourcePdf.url (unexpected).");
+
+      await refreshProjects();
     } finally {
       setBusy("");
     }
@@ -187,6 +244,8 @@ export default function Page() {
       setManifestUrl(j.manifestUrl);
       setUrlParams(projectId, j.manifestUrl);
       await loadManifest(j.manifestUrl);
+
+      await refreshProjects();
     } finally {
       setBusy("");
     }
@@ -262,11 +321,61 @@ export default function Page() {
 
         setRasterProgress((p) => ({ ...p, uploaded: p.uploaded + 1 }));
       }
+
+      await refreshProjects();
     } catch (e) {
       setLastError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy("");
       setRasterProgress((p) => ({ ...p, running: false }));
+    }
+  }
+
+  async function deleteProject(targetProjectId: string) {
+    // minimal “guard”: confirm dialog
+    const ok = window.confirm(`Delete project ${targetProjectId}? This deletes its PDF, text, pages, manifest.`);
+    if (!ok) return;
+
+    setLastError("");
+    setProjectsBusy(true);
+
+    try {
+      const r = await fetch("/api/projects/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId: targetProjectId })
+      });
+
+      if (!r.ok) throw new Error(await readErrorText(r));
+
+      // If you deleted the currently opened project, clear UI
+      if (targetProjectId === projectId) {
+        setProjectId("");
+        setManifestUrl("");
+        setManifest(null);
+        const url = new URL(window.location.href);
+        url.searchParams.delete("pid");
+        url.searchParams.delete("m");
+        window.history.replaceState({}, "", url.toString());
+      }
+
+      await refreshProjects();
+    } catch (e) {
+      setLastError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setProjectsBusy(false);
+    }
+  }
+
+  async function openProject(p: ProjectRow) {
+    setLastError("");
+    setProjectId(p.projectId);
+    setManifestUrl(p.manifestUrl);
+    setUrlParams(p.projectId, p.manifestUrl);
+    try {
+      await loadManifest(p.manifestUrl);
+    } catch (e) {
+      setLastError(e instanceof Error ? e.message : String(e));
     }
   }
 
@@ -345,6 +454,120 @@ export default function Page() {
 
       <div style={{ marginTop: 18, borderTop: "1px solid rgba(0,0,0,0.2)" }} />
 
+      {/* Projects panel */}
+      <div style={{ marginTop: 18, border: "1px solid #000", borderRadius: 12 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: 14 }}>
+          <div style={{ fontWeight: 800 }}>Projects</div>
+
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <button
+              type="button"
+              aria-label="Refresh projects"
+              disabled={projectsBusy}
+              onClick={() => void refreshProjects()}
+              style={{
+                border: "1px solid #000",
+                background: "#fff",
+                width: 36,
+                height: 30,
+                borderRadius: 10,
+                display: "grid",
+                placeItems: "center",
+                opacity: projectsBusy ? 0.5 : 1
+              }}
+            >
+              <Refresh />
+            </button>
+
+            <button
+              type="button"
+              aria-label={projectsOpen ? "Collapse projects" : "Expand projects"}
+              onClick={() => setProjectsOpen((v) => !v)}
+              style={{
+                border: "1px solid #000",
+                background: "#fff",
+                width: 36,
+                height: 30,
+                borderRadius: 10,
+                display: "grid",
+                placeItems: "center"
+              }}
+            >
+              <Chevron up={projectsOpen} />
+            </button>
+          </div>
+        </div>
+
+        {projectsOpen && (
+          <div style={{ padding: "0 14px 14px 14px" }}>
+            {projects.length === 0 ? (
+              <div style={{ fontSize: 13, opacity: 0.7 }}>No projects found.</div>
+            ) : (
+              <div style={{ display: "grid", gap: 8 }}>
+                {projects.map((p) => {
+                  const active = p.projectId === projectId;
+                  return (
+                    <div
+                      key={p.projectId}
+                      style={{
+                        border: "1px solid rgba(0,0,0,0.25)",
+                        borderRadius: 12,
+                        padding: 10,
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        gap: 10,
+                        background: active ? "rgba(0,0,0,0.04)" : "#fff"
+                      }}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => void openProject(p)}
+                        style={{
+                          textAlign: "left",
+                          flex: 1,
+                          border: "none",
+                          background: "transparent",
+                          padding: 0,
+                          cursor: "pointer"
+                        }}
+                      >
+                        <div style={{ fontWeight: 800, fontSize: 13, lineHeight: "18px" }}>
+                          {p.filename || "(no source)"}
+                        </div>
+                        <div style={{ fontSize: 12, opacity: 0.75, marginTop: 4 }}>
+                          id: {p.projectId} · {p.status} · pages: {p.pagesCount} · text: {p.hasText ? "yes" : "no"}
+                        </div>
+                      </button>
+
+                      <button
+                        type="button"
+                        aria-label={`Delete project ${p.projectId}`}
+                        disabled={projectsBusy}
+                        onClick={() => void deleteProject(p.projectId)}
+                        style={{
+                          border: "1px solid #000",
+                          background: "#fff",
+                          width: 36,
+                          height: 30,
+                          borderRadius: 10,
+                          display: "grid",
+                          placeItems: "center",
+                          opacity: projectsBusy ? 0.5 : 1
+                        }}
+                      >
+                        <Trash />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Cloud state panel */}
       <div style={{ marginTop: 18, border: "1px solid #000", borderRadius: 12 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: 14 }}>
           <div style={{ fontWeight: 800 }}>Cloud state</div>
@@ -384,17 +607,6 @@ export default function Page() {
             <div style={{ marginTop: 10 }}>
               <span style={{ opacity: 0.7 }}>pages (PNGs):</span> {pagesCount}
             </div>
-
-            {pagesCount > 0 && (
-              <div style={{ marginTop: 8 }}>
-                <div style={{ opacity: 0.7, marginBottom: 6 }}>First 3 page URLs:</div>
-                {(manifest?.pages ?? []).slice(0, 3).map((p) => (
-                  <div key={p.pageNumber} style={{ fontSize: 12, wordBreak: "break-all", marginBottom: 6 }}>
-                    p{p.pageNumber}: {p.url}
-                  </div>
-                ))}
-              </div>
-            )}
           </div>
         )}
       </div>
