@@ -119,7 +119,13 @@ function Chevron({ up }: { up: boolean }) {
     </svg>
   );
 }
-
+function XIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  );
+}
 function Trash() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -216,7 +222,37 @@ export default function Page() {
     totalPages: 0,
     assetsUploaded: 0
   });
+async function deleteAsset(pageNumber: number, assetId: string, assetUrl: string) {
+  if (!projectId || !manifestUrl) return;
 
+  const ok = window.confirm(`Delete asset ${assetId}?`);
+  if (!ok) return;
+
+  setLastError("");
+  setBusy("Deleting asset...");
+
+  try {
+    const r = await fetch("/api/projects/assets/delete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ projectId, manifestUrl, pageNumber, assetId, assetUrl })
+    });
+
+    if (!r.ok) throw new Error(await readErrorText(r));
+
+    const j = (await r.json()) as { ok: boolean; manifestUrl?: string; error?: string };
+    if (!j.ok || !j.manifestUrl) throw new Error(j.error || "Delete asset failed");
+
+    setManifestUrl(j.manifestUrl);
+    setUrlParams(projectId, j.manifestUrl);
+    await loadManifest(j.manifestUrl);
+    await refreshProjects();
+  } catch (e) {
+    setLastError(e instanceof Error ? e.message : String(e));
+  } finally {
+    setBusy("");
+  }
+}
   async function loadManifest(url: string) {
     const mRes = await fetch(bust(url), { cache: "no-store" });
     if (!mRes.ok) throw new Error(`Failed to fetch manifest: ${await readErrorText(mRes)}`);
@@ -798,59 +834,83 @@ export default function Page() {
             <Chevron up={assetsOpen} />
           </button>
         </div>
+{assetsOpen && (
+  <div style={{ padding: "0 14px 14px 14px" }}>
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 10 }}>
+      {assetsFlat.map(({ pageNumber, asset }) => {
+        const tags = Array.isArray(asset.tags) ? asset.tags : [];
+        return (
+          <div
+            key={`${pageNumber}-${asset.assetId}`}
+            style={{
+              position: "relative",
+              border: "1px solid rgba(0,0,0,0.25)",
+              borderRadius: 12,
+              overflow: "hidden",
+              background: "#fff"
+            }}
+          >
+            <button
+              type="button"
+              aria-label={`Delete ${asset.assetId}`}
+              disabled={!!busy}
+              onClick={() => void deleteAsset(pageNumber, asset.assetId, asset.url)}
+              style={{
+                position: "absolute",
+                top: 8,
+                right: 8,
+                border: "1px solid rgba(0,0,0,0.35)",
+                background: "#fff",
+                width: 28,
+                height: 24,
+                borderRadius: 10,
+                display: "grid",
+                placeItems: "center",
+                opacity: busy ? 0.5 : 1,
+                cursor: busy ? "not-allowed" : "pointer",
+                zIndex: 2
+              }}
+            >
+              <XIcon />
+            </button>
 
-        {assetsOpen && (
-          <div style={{ padding: "0 14px 14px 14px" }}>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 10 }}>
-              {assetsFlat.map(({ pageNumber, asset }) => {
-                const tags = Array.isArray(asset.tags) ? asset.tags : [];
-                return (
-                  <div
-                    key={`${pageNumber}-${asset.assetId}`}
-                    style={{
-                      border: "1px solid rgba(0,0,0,0.25)",
-                      borderRadius: 12,
-                      overflow: "hidden",
-                      background: "#fff"
-                    }}
-                  >
-                    <div style={{ aspectRatio: "1 / 1", background: "rgba(0,0,0,0.03)" }}>
-                      <img
-                        src={bust(asset.url)}
-                        alt=""
-                        style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }}
-                      />
-                    </div>
+            <div style={{ aspectRatio: "1 / 1", background: "rgba(0,0,0,0.03)" }}>
+              <img
+                src={bust(asset.url)}
+                alt=""
+                style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }}
+              />
+            </div>
 
-                    <div style={{ padding: 10 }}>
-                      <div style={{ fontSize: 12, fontWeight: 800 }}>
-                        p{pageNumber} · {asset.assetId}
-                      </div>
+            <div style={{ padding: 10 }}>
+              <div style={{ fontSize: 12, fontWeight: 800 }}>
+                p{pageNumber} · {asset.assetId}
+              </div>
 
-                      {tags.length > 0 && (
-                        <div style={{ marginTop: 8, display: "flex", flexWrap: "wrap", gap: 6 }}>
-                          {tags.slice(0, 16).map((t) => (
-                            <span
-                              key={t}
-                              style={{
-                                border: "1px solid rgba(0,0,0,0.25)",
-                                borderRadius: 999,
-                                padding: "3px 8px",
-                                fontSize: 12
-                              }}
-                            >
-                              {t}
-                            </span>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
+              {tags.length > 0 && (
+                <div style={{ marginTop: 8, display: "flex", flexWrap: "wrap", gap: 6 }}>
+                  {tags.map((t) => (
+                    <span
+                      key={t}
+                      style={{
+                        fontSize: 12,
+                        padding: "4px 8px",
+                        border: "1px solid rgba(0,0,0,0.25)",
+                        borderRadius: 999
+                      }}
+                    >
+                      {t}
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
-        )}
+        );
+      })}
+    </div>
+  </div>
+)}
       </div>
 
       <div style={{ marginTop: 18, border: "1px solid #000", borderRadius: 12 }}>
