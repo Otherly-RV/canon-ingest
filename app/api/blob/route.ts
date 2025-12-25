@@ -3,19 +3,22 @@ import { handleUpload } from "@vercel/blob/client";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function POST(request: Request) {
-  return handleUpload({
+export async function POST(request: Request): Promise<Response> {
+  const result = await handleUpload({
     request,
-    // You can add auth here later if needed.
-    onBeforeGenerateToken: async (pathname: string) => {
-      // Lock down to PNG only (your requirement)
+    onBeforeGenerateToken: async () => {
       return {
-        allowedContentTypes: ["image/png"],
-        tokenPayload: JSON.stringify({ pathname })
+        allowedContentTypes: ["image/png"]
       };
     },
     onUploadCompleted: async () => {
-      // optional: log / webhook later
+      // no-op
     }
+  });
+
+  // Next.js wants a Response. handleUpload returns an object payload.
+  return new Response(JSON.stringify(result), {
+    status: 200,
+    headers: { "Content-Type": "application/json" }
   });
 }
