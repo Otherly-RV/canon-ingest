@@ -57,6 +57,13 @@ function setUrlParams(pid: string, m: string) {
   window.history.replaceState({}, "", url.toString());
 }
 
+function clearUrlParams() {
+  const url = new URL(window.location.href);
+  url.searchParams.delete("pid");
+  url.searchParams.delete("m");
+  window.history.replaceState({}, "", url.toString());
+}
+
 function getUrlParams() {
   const url = new URL(window.location.href);
   return {
@@ -168,8 +175,12 @@ export default function Page() {
     if (pid && m) {
       setProjectId(pid);
       setManifestUrl(m);
-      loadManifest(m).catch((e) => setLastError(e instanceof Error ? e.message : String(e)));
+      loadManifest(m).catch((e) => {
+        const msg = e instanceof Error ? e.message : String(e);
+        setLastError(msg);
+      });
     }
+
     refreshProjects().catch(() => {});
   }, []);
 
@@ -183,6 +194,7 @@ export default function Page() {
     setProjectId(j.projectId);
     setManifestUrl(j.manifestUrl);
     setUrlParams(j.projectId, j.manifestUrl);
+
     await loadManifest(j.manifestUrl);
     await refreshProjects();
 
@@ -242,8 +254,8 @@ export default function Page() {
 
       setManifestUrl(j.manifestUrl);
       setUrlParams(projectId, j.manifestUrl);
-      await loadManifest(j.manifestUrl);
 
+      await loadManifest(j.manifestUrl);
       await refreshProjects();
     } finally {
       setBusy("");
@@ -264,6 +276,7 @@ export default function Page() {
 
     setManifestUrl(j.manifestUrl);
     setUrlParams(projectId, j.manifestUrl);
+
     await loadManifest(j.manifestUrl);
   }
 
@@ -331,7 +344,6 @@ export default function Page() {
   }
 
   async function deleteProject(targetProjectId: string) {
-    // minimal “guard”: confirm dialog
     const ok = window.confirm(`Delete project ${targetProjectId}? This deletes its PDF, text, pages, manifest.`);
     if (!ok) return;
 
@@ -347,15 +359,11 @@ export default function Page() {
 
       if (!r.ok) throw new Error(await readErrorText(r));
 
-      // If you deleted the currently opened project, clear UI
       if (targetProjectId === projectId) {
         setProjectId("");
         setManifestUrl("");
         setManifest(null);
-        const url = new URL(window.location.href);
-        url.searchParams.delete("pid");
-        url.searchParams.delete("m");
-        window.history.replaceState({}, "", url.toString());
+        clearUrlParams();
       }
 
       await refreshProjects();
@@ -366,15 +374,29 @@ export default function Page() {
     }
   }
 
+  // ✅ UPDATED: if manifest is stale (404), refresh list + clear selection
   async function openProject(p: ProjectRow) {
     setLastError("");
     setProjectId(p.projectId);
     setManifestUrl(p.manifestUrl);
     setUrlParams(p.projectId, p.manifestUrl);
+
     try {
       await loadManifest(p.manifestUrl);
     } catch (e) {
-      setLastError(e instanceof Error ? e.message : String(e));
+      const msg = e instanceof Error ? e.message : String(e);
+      setLastError(msg);
+
+      const lower = msg.toLowerCase();
+      const looksLike404 = msg.includes("404") || lower.includes("not found");
+
+      if (looksLike404) {
+        await refreshProjects();
+        setProjectId("");
+        setManifestUrl("");
+        setManifest(null);
+        clearUrlParams();
+      }
     }
   }
 
@@ -591,16 +613,26 @@ export default function Page() {
 
         {cloudOpen && (
           <div style={{ padding: "0 14px 14px 14px", fontSize: 13 }}>
-            <div><span style={{ opacity: 0.7 }}>projectId:</span> {projectId || "—"}</div>
-            <div style={{ marginTop: 6 }}><span style={{ opacity: 0.7 }}>status:</span> {manifest?.status || "—"}</div>
+            <div>
+              <span style={{ opacity: 0.7 }}>projectId:</span> {projectId || "—"}
+            </div>
+            <div style={{ marginTop: 6 }}>
+              <span style={{ opacity: 0.7 }}>status:</span> {manifest?.status || "—"}
+            </div>
 
-            <div style={{ marginTop: 10 }}><span style={{ opacity: 0.7 }}>manifestUrl:</span></div>
+            <div style={{ marginTop: 10 }}>
+              <span style={{ opacity: 0.7 }}>manifestUrl:</span>
+            </div>
             <div style={{ fontSize: 12, wordBreak: "break-all" }}>{manifestUrl || "—"}</div>
 
-            <div style={{ marginTop: 10 }}><span style={{ opacity: 0.7 }}>sourcePdf:</span></div>
+            <div style={{ marginTop: 10 }}>
+              <span style={{ opacity: 0.7 }}>sourcePdf:</span>
+            </div>
             <div style={{ fontSize: 12, wordBreak: "break-all" }}>{manifest?.sourcePdf?.url || "—"}</div>
 
-            <div style={{ marginTop: 10 }}><span style={{ opacity: 0.7 }}>extractedText:</span></div>
+            <div style={{ marginTop: 10 }}>
+              <span style={{ opacity: 0.7 }}>extractedText:</span>
+            </div>
             <div style={{ fontSize: 12, wordBreak: "break-all" }}>{manifest?.extractedText?.url || "—"}</div>
 
             <div style={{ marginTop: 10 }}>
