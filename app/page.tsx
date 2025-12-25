@@ -10,6 +10,7 @@ type PageAsset = {
   url: string;
   bbox: AssetBBox;
   tags?: string[];
+  tagRationale?: string;
 };
 
 type Manifest = {
@@ -24,7 +25,7 @@ type Manifest = {
     url: string;
     width: number;
     height: number;
-    tags?: string[];
+    tags?: string[]; // legacy, not shown
     assets?: PageAsset[];
   }>;
   settings: {
@@ -40,7 +41,7 @@ type ProjectRow = {
   createdAt: string;
   status: string;
   filename: string;
-  sCount: number;
+  pagesCount: number;
   hasText: boolean;
 };
 
@@ -49,11 +50,11 @@ type PdfJsLib = {
   GlobalWorkerOptions?: { workerSrc: string };
 };
 
-type PdfLoadingTask = { promise: Promise<PdfDocument> };
+type PdfLoadingTask = { promise: Promise<unknown> };
 
 type PdfDocument = {
-  nums: number;
-  get: (Number: number) => Promise<PdfPage>;
+  numPages: number;
+  getPage: (pageNumber: number) => Promise<PdfPage>;
 };
 
 type PdfPage = {
@@ -161,11 +162,12 @@ function Tabs({
     borderRadius: 10,
     padding: "7px 10px",
     fontSize: 13,
-    cursor: "pointer"
+    cursor: "pointer",
+    whiteSpace: "nowrap"
   });
 
   return (
-    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+    <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
       <button type="button" onClick={() => onChange("ai")} style={tabStyle(value === "ai")}>
         AI Rules
       </button>
@@ -358,7 +360,8 @@ export default function Page() {
       setPdfJsWorker(pdfjs);
 
       const loadingTask = pdfjs.getDocument({ url: manifest.sourcePdf.url, withCredentials: false });
-      const pdf = await loadingTask.promise;
+      const pdfUnknown = await loadingTask.promise;
+      const pdf = pdfUnknown as PdfDocument;
 
       const totalPages = Number(pdf.numPages) || 0;
       setRasterProgress((p) => ({ ...p, totalPages }));
@@ -463,40 +466,7 @@ export default function Page() {
       }
     }
   }
-async function tagImages() {
-  setLastError("");
 
-  if (!projectId || !manifestUrl) return setLastError("Missing projectId/manifestUrl");
-  if (!manifest?.docAiJson?.url) return setLastError("No DocAI JSON");
-  if (!manifest?.pages?.length) return setLastError("No pages/assets");
-
-  if (busy) return;
-
-  setBusy("Tagging...");
-
-  try {
-    const r = await fetch("/api/projects/assets/tag", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ projectId, manifestUrl })
-    });
-
-    if (!r.ok) throw new Error(await readErrorText(r));
-
-    const j = (await r.json()) as { ok: boolean; manifestUrl?: string; error?: string };
-    if (!j.ok || !j.manifestUrl) throw new Error(j.error || "Tagging failed (bad response)");
-
-    setManifestUrl(j.manifestUrl);
-    setUrlParams(projectId, j.manifestUrl);
-
-    await loadManifest(j.manifestUrl);
-    await refreshProjects();
-  } catch (e) {
-    setLastError(e instanceof Error ? e.message : String(e));
-  } finally {
-    setBusy("");
-  }
-}
   async function saveSettings() {
     setSettingsError("");
     if (!projectId || !manifestUrl) {
@@ -586,7 +556,6 @@ async function tagImages() {
         byPage.set(p.pageNumber, Array.isArray(p.boxes) ? p.boxes : []);
       }
 
-      // Use the latest manifest from state for page URLs/sizes
       const pages = manifest.pages;
 
       for (const page of pages) {
@@ -642,26 +611,59 @@ async function tagImages() {
     }
   }
 
+  async function tagImages() {
+    setLastError("");
+
+    if (!projectId || !manifestUrl) return setLastError("Missing projectId/manifestUrl");
+    if (!manifest?.docAiJson?.url) return setLastError("No DocAI JSON");
+    if (!manifest?.pages?.length) return setLastError("No pages/assets");
+    if (busy) return;
+
+    setBusy("Tagging...");
+
+    try {
+      const r = await fetch("/api/projects/assets/tag", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId, manifestUrl })
+      });
+
+      if (!r.ok) throw new Error(await readErrorText(r));
+
+      const j = (await r.json()) as { ok: boolean; manifestUrl?: string; error?: string };
+      if (!j.ok || !j.manifestUrl) throw new Error(j.error || "Tagging failed (bad response)");
+
+      setManifestUrl(j.manifestUrl);
+      setUrlParams(projectId, j.manifestUrl);
+
+      await loadManifest(j.manifestUrl);
+      await refreshProjects();
+    } catch (e) {
+      setLastError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy("");
+    }
+  }
+
   const pagesCount = manifest?.pages?.length ?? 0;
 
-  const assetsCount =
-    (manifest?.pages ?? []).reduce((acc, p) => acc + (Array.isArray(p.assets) ? p.assets.length : 0), 0) ?? 0;
+  const totalAssetsCount =
+    (manifest?.pages ?? []).reduce((acc, p) => acc + ((p.assets ?? []).length), 0) ?? 0;
 
-  const taggedPagesCount =
-    (manifest?.pages ?? []).filter((p) => Array.isArray(p.tags) && p.tags.length > 0).length ?? 0;
-const taggedAssetsCount =
-  (manifest?.pages ?? []).reduce((acc, p) => acc + ((p.assets ?? []).filter((a) => (a.tags ?? []).length > 0).length), 0) ?? 0;
+  const taggedAssetsCount =
+    (manifest?.pages ?? []).reduce(
+      (acc, p) => acc + ((p.assets ?? []).filter((a) => (a.tags ?? []).length > 0).length),
+      0
+    ) ?? 0;
 
-const totalAssetsCount =
-  (manifest?.pages ?? []).reduce((acc, p) => acc + ((p.assets ?? []).length), 0) ?? 0;
   return (
     <div style={{ minHeight: "100vh", padding: 28 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 16 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
         <div>
           <div style={{ fontSize: 22, fontWeight: 800, letterSpacing: -0.3 }}>OTHERLY — Ingest 1.0</div>
         </div>
 
-        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
           <button
             type="button"
             disabled={!!busy}
@@ -718,21 +720,22 @@ const totalAssetsCount =
           >
             Split images
           </button>
+
           <button
-  type="button"
-  disabled={!manifest?.pages?.length || !manifest?.docAiJson?.url || !!busy}
-  onClick={() => void tagImages()}
-  style={{
-    border: "1px solid #000",
-    background: manifest?.pages?.length && manifest?.docAiJson?.url && !busy ? "#000" : "#fff",
-    color: manifest?.pages?.length && manifest?.docAiJson?.url && !busy ? "#fff" : "#000",
-    padding: "10px 12px",
-    borderRadius: 12,
-    opacity: manifest?.pages?.length && manifest?.docAiJson?.url && !busy ? 1 : 0.4
-  }}
->
-  Tag images
-</button>
+            type="button"
+            disabled={!manifest?.docAiJson?.url || !manifest?.pages?.length || !!busy}
+            onClick={() => void tagImages()}
+            style={{
+              border: "1px solid #000",
+              background: manifest?.docAiJson?.url && manifest?.pages?.length && !busy ? "#000" : "#fff",
+              color: manifest?.docAiJson?.url && manifest?.pages?.length && !busy ? "#fff" : "#000",
+              padding: "10px 12px",
+              borderRadius: 12,
+              opacity: manifest?.docAiJson?.url && manifest?.pages?.length && !busy ? 1 : 0.4
+            }}
+          >
+            Tag images
+          </button>
         </div>
       </div>
 
@@ -787,8 +790,8 @@ const totalAssetsCount =
         </div>
 
         {settingsOpen && (
-          <div style={{ padding: "0 14px 14px 14px" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
+          <div style={{ padding: "0 14px 14px 14px", overflow: "hidden" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
               <Tabs value={settingsTab} onChange={setSettingsTab} />
 
               <button
@@ -804,7 +807,8 @@ const totalAssetsCount =
                   opacity: settingsBusy || !projectId || !manifestUrl ? 0.5 : 1,
                   cursor: settingsBusy || !projectId || !manifestUrl ? "not-allowed" : "pointer",
                   fontSize: 13,
-                  fontWeight: 800
+                  fontWeight: 800,
+                  whiteSpace: "nowrap"
                 }}
               >
                 {settingsBusy ? "Saving..." : "Save"}
@@ -820,28 +824,31 @@ const totalAssetsCount =
 
             <div style={{ marginTop: 12 }}>
               {settingsTab === "ai" ? (
-<textarea
-  value={taggingJsonDraft}
-  onChange={(e) => setTaggingJsonDraft(e.target.value)}
-  style={{
-    width: "100%",
-    maxWidth: "100%",
-    boxSizing: "border-box",
-    display: "block",
-    minHeight: 180,
-    border: "1px solid rgba(0,0,0,0.35)",
-    borderRadius: 12,
-    padding: 12,
-    fontSize: 13,
-    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
-  }}
-/>
+                <textarea
+                  value={aiRulesDraft}
+                  onChange={(e) => setAiRulesDraft(e.target.value)}
+                  style={{
+                    width: "100%",
+                    maxWidth: "100%",
+                    boxSizing: "border-box",
+                    display: "block",
+                    minHeight: 180,
+                    border: "1px solid rgba(0,0,0,0.35)",
+                    borderRadius: 12,
+                    padding: 12,
+                    fontSize: 13,
+                    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
+                  }}
+                />
               ) : (
                 <textarea
                   value={taggingJsonDraft}
                   onChange={(e) => setTaggingJsonDraft(e.target.value)}
                   style={{
                     width: "100%",
+                    maxWidth: "100%",
+                    boxSizing: "border-box",
+                    display: "block",
                     minHeight: 180,
                     border: "1px solid rgba(0,0,0,0.35)",
                     borderRadius: 12,
@@ -1025,18 +1032,10 @@ const totalAssetsCount =
             </div>
 
             <div style={{ marginTop: 6 }}>
-              <span style={{ opacity: 0.7 }}>assets:</span> {assetsCount}
+              <span style={{ opacity: 0.7 }}>assets:</span> {taggedAssetsCount}/{totalAssetsCount}
             </div>
-
-            <div style={{ marginTop: 6 }}>
-  <span style={{ opacity: 0.7 }}>tagged pages:</span> {taggedPagesCount}/{pagesCount}
-</div>
-
-<div style={{ marginTop: 6 }}>
-  <span style={{ opacity: 0.7 }}>assets:</span> {taggedAssetsCount}/{totalAssetsCount}
-</div>
-</div>
-)}
+          </div>
+        )}
       </div>
 
       <input
