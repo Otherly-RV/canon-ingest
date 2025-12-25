@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 
 type Manifest = {
   projectId: string;
@@ -19,6 +19,27 @@ async function readErrorText(res: Response) {
   }
 }
 
+function setUrlParams(pid: string, m: string) {
+  const url = new URL(window.location.href);
+  url.searchParams.set("pid", pid);
+  url.searchParams.set("m", m);
+  window.history.replaceState({}, "", url.toString());
+}
+
+function getUrlParams() {
+  const url = new URL(window.location.href);
+  return {
+    pid: url.searchParams.get("pid") || "",
+    m: url.searchParams.get("m") || ""
+  };
+}
+
+function bust(url: string) {
+  const u = new URL(url);
+  u.searchParams.set("v", String(Date.now()));
+  return u.toString();
+}
+
 export default function Page() {
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -29,12 +50,21 @@ export default function Page() {
   const [lastError, setLastError] = useState<string>("");
 
   async function loadManifest(url: string) {
-    const mRes = await fetch(url, { cache: "no-store" });
+    const mRes = await fetch(bust(url), { cache: "no-store" });
     if (!mRes.ok) throw new Error(`Failed to fetch manifest: ${await readErrorText(mRes)}`);
     const m = (await mRes.json()) as Manifest;
     setManifest(m);
     return m;
   }
+
+  useEffect(() => {
+    const { pid, m } = getUrlParams();
+    if (pid && m) {
+      setProjectId(pid);
+      setManifestUrl(m);
+      loadManifest(m).catch((e) => setLastError(e instanceof Error ? e.message : String(e)));
+    }
+  }, []);
 
   async function createProject() {
     const r = await fetch("/api/projects/create", { method: "POST" });
@@ -45,6 +75,7 @@ export default function Page() {
 
     setProjectId(j.projectId);
     setManifestUrl(j.manifestUrl);
+    setUrlParams(j.projectId, j.manifestUrl);
     await loadManifest(j.manifestUrl);
 
     return { projectId: j.projectId, manifestUrl: j.manifestUrl };
@@ -69,7 +100,12 @@ export default function Page() {
       if (!j.ok || !j.manifestUrl) throw new Error(j.error || "Upload failed (bad response)");
 
       setManifestUrl(j.manifestUrl);
-      await loadManifest(j.manifestUrl);
+      setUrlParams(p.projectId, j.manifestUrl);
+
+      const m = await loadManifest(j.manifestUrl);
+      if (!m.sourcePdf?.url) {
+        throw new Error("Upload finished but manifest still has no sourcePdf.url (cache/overwrite issue).");
+      }
     } finally {
       setBusy("");
     }
@@ -79,7 +115,7 @@ export default function Page() {
     setLastError("");
 
     if (!projectId || !manifestUrl) return setLastError("Missing projectId/manifestUrl (upload a PDF first).");
-    if (!manifest?.sourcePdf) return setLastError("No source PDF in manifest (upload a PDF first).");
+    if (!manifest?.sourcePdf?.url) return setLastError("No source PDF in manifest (upload again).");
     if (busy) return;
 
     setBusy("Processing PDF with Document AI...");
@@ -97,6 +133,7 @@ export default function Page() {
       if (!j.ok || !j.manifestUrl) throw new Error(j.error || "Process failed (bad response)");
 
       setManifestUrl(j.manifestUrl);
+      setUrlParams(projectId, j.manifestUrl);
       await loadManifest(j.manifestUrl);
     } finally {
       setBusy("");
@@ -118,28 +155,22 @@ export default function Page() {
             type="button"
             disabled={!!busy}
             onClick={() => fileRef.current?.click()}
-            style={{
-              border: "1px solid #000",
-              background: "#fff",
-              padding: "10px 12px",
-              borderRadius: 12,
-              opacity: busy ? 0.6 : 1
-            }}
+            style={{ border: "1px solid #000", background: "#fff", padding: "10px 12px", borderRadius: 12 }}
           >
             Upload SOURCE
           </button>
 
           <button
             type="button"
-            disabled={!manifest?.sourcePdf || !!busy}
+            disabled={!manifest?.sourcePdf?.url || !!busy}
             onClick={() => void processPdf()}
             style={{
               border: "1px solid #000",
-              background: manifest?.sourcePdf && !busy ? "#000" : "#fff",
-              color: manifest?.sourcePdf && !busy ? "#fff" : "#000",
+              background: manifest?.sourcePdf?.url && !busy ? "#000" : "#fff",
+              color: manifest?.sourcePdf?.url && !busy ? "#fff" : "#000",
               padding: "10px 12px",
               borderRadius: 12,
-              opacity: manifest?.sourcePdf && !busy ? 1 : 0.4
+              opacity: manifest?.sourcePdf?.url && !busy ? 1 : 0.4
             }}
           >
             Process
