@@ -9,7 +9,12 @@ type Manifest = {
   status: "empty" | "uploaded" | "processed";
   sourcePdf?: { url: string; filename: string };
   extractedText?: { url: string };
-  pages?: Array<{ pageNumber: number; url: string; width: number; height: number }>;
+  pages?: Array<{ pageNumber: number; url: string; width: number; height: number; tags?: string[] }>;
+  settings: {
+    aiRules: string;
+    uiFieldsJson: string;
+    taggingJson: string;
+  };
 };
 
 type ProjectRow = {
@@ -125,6 +130,35 @@ function Refresh() {
   );
 }
 
+function Tabs({
+  value,
+  onChange
+}: {
+  value: "ai" | "tagging";
+  onChange: (v: "ai" | "tagging") => void;
+}) {
+  const tabStyle = (active: boolean): React.CSSProperties => ({
+    border: "1px solid #000",
+    background: active ? "#000" : "#fff",
+    color: active ? "#fff" : "#000",
+    borderRadius: 10,
+    padding: "7px 10px",
+    fontSize: 13,
+    cursor: "pointer"
+  });
+
+  return (
+    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+      <button type="button" onClick={() => onChange("ai")} style={tabStyle(value === "ai")}>
+        AI Rules
+      </button>
+      <button type="button" onClick={() => onChange("tagging")} style={tabStyle(value === "tagging")}>
+        Tagging JSON
+      </button>
+    </div>
+  );
+}
+
 export default function Page() {
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -140,6 +174,14 @@ export default function Page() {
   const [projectsBusy, setProjectsBusy] = useState(false);
   const [projects, setProjects] = useState<ProjectRow[]>([]);
 
+  const [settingsOpen, setSettingsOpen] = useState(true);
+  const [settingsTab, setSettingsTab] = useState<"ai" | "tagging">("ai");
+  const [settingsBusy, setSettingsBusy] = useState(false);
+  const [settingsError, setSettingsError] = useState<string>("");
+
+  const [aiRulesDraft, setAiRulesDraft] = useState<string>("");
+  const [taggingJsonDraft, setTaggingJsonDraft] = useState<string>("");
+
   const [rasterProgress, setRasterProgress] = useState<{
     running: boolean;
     currentPage: number;
@@ -152,6 +194,11 @@ export default function Page() {
     if (!mRes.ok) throw new Error(`Failed to fetch manifest: ${await readErrorText(mRes)}`);
     const m = (await mRes.json()) as Manifest;
     setManifest(m);
+
+    // Load settings drafts from manifest (so UI edits are based on persisted state)
+    setAiRulesDraft(m.settings?.aiRules ?? "");
+    setTaggingJsonDraft(m.settings?.taggingJson ?? "");
+
     return m;
   }
 
@@ -175,12 +222,8 @@ export default function Page() {
     if (pid && m) {
       setProjectId(pid);
       setManifestUrl(m);
-      loadManifest(m).catch((e) => {
-        const msg = e instanceof Error ? e.message : String(e);
-        setLastError(msg);
-      });
+      loadManifest(m).catch((e) => setLastError(e instanceof Error ? e.message : String(e)));
     }
-
     refreshProjects().catch(() => {});
   }, []);
 
@@ -363,6 +406,8 @@ export default function Page() {
         setProjectId("");
         setManifestUrl("");
         setManifest(null);
+        setAiRulesDraft("");
+        setTaggingJsonDraft("");
         clearUrlParams();
       }
 
@@ -374,7 +419,6 @@ export default function Page() {
     }
   }
 
-  // ✅ UPDATED: if manifest is stale (404), refresh list + clear selection
   async function openProject(p: ProjectRow) {
     setLastError("");
     setProjectId(p.projectId);
@@ -395,12 +439,60 @@ export default function Page() {
         setProjectId("");
         setManifestUrl("");
         setManifest(null);
+        setAiRulesDraft("");
+        setTaggingJsonDraft("");
         clearUrlParams();
       }
     }
   }
 
+  async function saveSettings() {
+    setSettingsError("");
+    if (!projectId || !manifestUrl) {
+      setSettingsError("No active project selected.");
+      return;
+    }
+
+    // Validate taggingJson before sending
+    try {
+      JSON.parse(taggingJsonDraft);
+    } catch {
+      setSettingsError("Tagging JSON is not valid JSON.");
+      return;
+    }
+
+    setSettingsBusy(true);
+    try {
+      const r = await fetch("/api/projects/settings/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          projectId,
+          manifestUrl,
+          aiRules: aiRulesDraft,
+          taggingJson: taggingJsonDraft
+        })
+      });
+
+      if (!r.ok) throw new Error(await readErrorText(r));
+
+      const j = (await r.json()) as { ok: boolean; manifestUrl?: string; error?: string };
+      if (!j.ok || !j.manifestUrl) throw new Error(j.error || "Save settings failed (bad response)");
+
+      setManifestUrl(j.manifestUrl);
+      setUrlParams(projectId, j.manifestUrl);
+      await loadManifest(j.manifestUrl);
+
+      await refreshProjects();
+    } catch (e) {
+      setSettingsError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSettingsBusy(false);
+    }
+  }
+
   const pagesCount = manifest?.pages?.length ?? 0;
+  const taggedCount = (manifest?.pages ?? []).filter((p) => Array.isArray(p.tags) && p.tags.length > 0).length;
 
   return (
     <div style={{ minHeight: "100vh", padding: 28 }}>
@@ -474,6 +566,108 @@ export default function Page() {
       )}
 
       <div style={{ marginTop: 18, borderTop: "1px solid rgba(0,0,0,0.2)" }} />
+
+      {/* Settings panel */}
+      <div style={{ marginTop: 18, border: "1px solid #000", borderRadius: 12 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: 14 }}>
+          <div style={{ fontWeight: 800 }}>Settings</div>
+
+          <button
+            type="button"
+            aria-label={settingsOpen ? "Collapse settings" : "Expand settings"}
+            onClick={() => setSettingsOpen((v) => !v)}
+            style={{
+              border: "1px solid #000",
+              background: "#fff",
+              width: 36,
+              height: 30,
+              borderRadius: 10,
+              display: "grid",
+              placeItems: "center"
+            }}
+          >
+            <Chevron up={settingsOpen} />
+          </button>
+        </div>
+
+        {settingsOpen && (
+          <div style={{ padding: "0 14px 14px 14px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
+              <Tabs value={settingsTab} onChange={setSettingsTab} />
+
+              <button
+                type="button"
+                disabled={settingsBusy || !projectId || !manifestUrl}
+                onClick={() => void saveSettings()}
+                style={{
+                  border: "1px solid #000",
+                  background: "#000",
+                  color: "#fff",
+                  padding: "8px 10px",
+                  borderRadius: 10,
+                  opacity: settingsBusy || !projectId || !manifestUrl ? 0.5 : 1,
+                  cursor: settingsBusy || !projectId || !manifestUrl ? "not-allowed" : "pointer",
+                  fontSize: 13,
+                  fontWeight: 800
+                }}
+              >
+                {settingsBusy ? "Saving..." : "Save"}
+              </button>
+            </div>
+
+            {settingsError && (
+              <div style={{ marginTop: 10, border: "1px solid #000", borderRadius: 12, padding: 10 }}>
+                <div style={{ fontWeight: 800, fontSize: 13 }}>Settings error</div>
+                <div style={{ marginTop: 6, fontSize: 13, whiteSpace: "pre-wrap" }}>{settingsError}</div>
+              </div>
+            )}
+
+            <div style={{ marginTop: 12 }}>
+              {settingsTab === "ai" ? (
+                <>
+                  <div style={{ fontSize: 13, opacity: 0.7, marginBottom: 6 }}>
+                    These rules will be used by the tagger (Step 7.2) as global behavior.
+                  </div>
+                  <textarea
+                    value={aiRulesDraft}
+                    onChange={(e) => setAiRulesDraft(e.target.value)}
+                    placeholder="Write global AI rules..."
+                    style={{
+                      width: "100%",
+                      minHeight: 180,
+                      border: "1px solid rgba(0,0,0,0.35)",
+                      borderRadius: 12,
+                      padding: 12,
+                      fontSize: 13,
+                      fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
+                    }}
+                  />
+                </>
+              ) : (
+                <>
+                  <div style={{ fontSize: 13, opacity: 0.7, marginBottom: 6 }}>
+                    Must be valid JSON. This will directly influence image tagging behavior (Step 7.2).
+                  </div>
+                  <textarea
+                    value={taggingJsonDraft}
+                    onChange={(e) => setTaggingJsonDraft(e.target.value)}
+                    placeholder='{"rules":[...]}'
+                    style={{
+                      width: "100%",
+                      minHeight: 180,
+                      border: "1px solid rgba(0,0,0,0.35)",
+                      borderRadius: 12,
+                      padding: 12,
+                      fontSize: 13,
+                      fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
+                    }}
+                  />
+                </>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
 
       {/* Projects panel */}
       <div style={{ marginTop: 18, border: "1px solid #000", borderRadius: 12 }}>
@@ -637,6 +831,10 @@ export default function Page() {
 
             <div style={{ marginTop: 10 }}>
               <span style={{ opacity: 0.7 }}>pages (PNGs):</span> {pagesCount}
+            </div>
+
+            <div style={{ marginTop: 6 }}>
+              <span style={{ opacity: 0.7 }}>tagged pages:</span> {taggedCount}/{pagesCount}
             </div>
           </div>
         )}
