@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { saveManifest, type ProjectManifest } from "@/app/lib/manifest";
+import { saveManifest, type ProjectManifest, type PageAsset } from "@/app/lib/manifest";
+import { GoogleGenerativeAI, type GenerativeModel } from "@google/generative-ai";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -7,32 +8,19 @@ export const dynamic = "force-dynamic";
 type Body = {
   projectId?: string;
   manifestUrl?: string;
-  limitAssets?: number;
   overwrite?: boolean;
+  limitAssets?: number; // optional safety
 };
 
-type DocAiRaw = {
-  document?: {
-    text?: string;
-    pages?: Array<{
-      layout?: {
-        textAnchor?: {
-          textSegments?: Array<{ startIndex?: number; endIndex?: number }>;
-        };
-      };
-    }>;
-  };
-};
-
-type TaggingResult = {
-  tags: string[];
-  rationale: string;
-};
-
-function getEnv(name: string): string {
+function mustEnv(name: string): string {
   const v = process.env[name];
-  if (!v) throw new Error(`Missing ${name}`);
-  return v;
+  if (!v || !String(v).trim()) throw new Error(`Missing ${name}`);
+  return String(v).trim();
+}
+
+function optEnv(name: string, fallback: string): string {
+  const v = process.env[name];
+  return v && String(v).trim() ? String(v).trim() : fallback;
 }
 
 function baseUrl(u: string) {
@@ -40,236 +28,310 @@ function baseUrl(u: string) {
   return `${url.origin}${url.pathname}`;
 }
 
-async function fetchJson<T>(urlRaw: string): Promise<T> {
-  const url = baseUrl(urlRaw);
-  const res = await fetch(`${url}?v=${Date.now()}`, {
-    cache: "no-store",
-    headers: { "Cache-Control": "no-cache" }
-  });
-  if (!res.ok) throw new Error(`Fetch failed (${res.status})`);
+async function readErrorText(res: Response) {
+  try {
+    const t = await res.text();
+    return t || `${res.status} ${res.statusText}`;
+  } catch {
+    return `${res.status} ${res.statusText}`;
+  }
+}
+
+async function fetchJson<T>(url: string): Promise<T> {
+  const res = await fetch(`${baseUrl(url)}?v=${Date.now()}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Fetch failed (${res.status}): ${await readErrorText(res)}`);
   return (await res.json()) as T;
 }
 
-async function fetchManifest(manifestUrlRaw: string): Promise<ProjectManifest> {
-  return await fetchJson<ProjectManifest>(manifestUrlRaw);
+async function fetchText(url: string): Promise<string> {
+  const res = await fetch(`${baseUrl(url)}?v=${Date.now()}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Fetch failed (${res.status}): ${await readErrorText(res)}`);
+  return await res.text();
 }
 
-function sliceTextByAnchor(
-  fullText: string,
-  anchor?: { textSegments?: Array<{ startIndex?: number; endIndex?: number }> }
-) {
-  const segs = anchor?.textSegments;
-  if (!fullText || !Array.isArray(segs) || segs.length === 0) return "";
+function clampInt(n: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, n));
+}
 
-  let out = "";
-  for (const s of segs) {
-    const a = Math.max(0, Number(s.startIndex ?? 0));
-    const b = Math.max(a, Number(s.endIndex ?? 0));
-    out += fullText.slice(a, b);
+function safeParseJsonFromText(raw: string): unknown {
+  const t = raw.trim();
+  if (!t) return null;
+
+  // 1) ```json ... ```
+  const fence = t.match(/```json\s*([\s\S]*?)\s*```/i);
+  if (fence?.[1]) {
+    try {
+      return JSON.parse(fence[1].trim());
+    } catch {
+      // fall through
+    }
   }
-  return out.trim();
-}
 
-function pageTextFromDocAi(raw: DocAiRaw, pageNumber1Based: number): string {
-  const doc = raw.document;
-  const fullText = typeof doc?.text === "string" ? doc.text : "";
-  const pages = Array.isArray(doc?.pages) ? doc!.pages! : [];
-  const page = pages[pageNumber1Based - 1];
-  if (!page) return "";
-  return sliceTextByAnchor(fullText, page.layout?.textAnchor);
-}
-
-function toBase64(buf: ArrayBuffer): string {
-  return Buffer.from(buf).toString("base64");
-}
-
-function extractFirstJsonObject(s: string): string | null {
-  const start = s.indexOf("{");
-  if (start < 0) return null;
-  let depth = 0;
-  for (let i = start; i < s.length; i++) {
-    const c = s[i];
-    if (c === "{") depth++;
-    if (c === "}") depth--;
-    if (depth === 0) return s.slice(start, i + 1);
+  // 2) first {...} block
+  const firstObj = t.match(/\{[\s\S]*\}/);
+  if (firstObj?.[0]) {
+    try {
+      return JSON.parse(firstObj[0]);
+    } catch {
+      // fall through
+    }
   }
-  return null;
+
+  // 3) try whole text
+  try {
+    return JSON.parse(t);
+  } catch {
+    return null;
+  }
 }
 
-function normalizeTags(tags: string[]): string[] {
-  return Array.from(
-    new Set(
-      tags
-        .map((t) => String(t).trim())
-        .filter(Boolean)
-        .map((t) => t.toLowerCase())
-    )
-  );
+function uniqCleanTags(tags: unknown, maxTags: number): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+
+  if (!Array.isArray(tags)) return out;
+
+  for (const v of tags) {
+    if (typeof v !== "string") continue;
+    const s = v.trim().replace(/\s+/g, " ");
+    if (!s) continue;
+    const key = s.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(s);
+    if (out.length >= maxTags) break;
+  }
+
+  return out;
+}
+
+function getPageTextFallback(fullText: string, pageNumber: number): string {
+  // If you later store per-page text, replace this.
+  // For now: return a window around "Page X" markers or just first N chars.
+  const marker = new RegExp(`\\bpage\\s*${pageNumber}\\b`, "i");
+  const idx = fullText.search(marker);
+  if (idx >= 0) {
+    const start = clampInt(idx - 2500, 0, fullText.length);
+    const end = clampInt(idx + 2500, 0, fullText.length);
+    return fullText.slice(start, end);
+  }
+  return fullText.slice(0, 5000);
+}
+
+function buildPrompt(args: {
+  aiRules: string;
+  taggingJson: string;
+  pageNumber: number;
+  assetId: string;
+  pageText: string;
+  maxTags: number;
+}) {
+  const { aiRules, taggingJson, pageNumber, assetId, pageText, maxTags } = args;
+
+  return [
+    `SYSTEM RULES (follow strictly):`,
+    aiRules,
+    ``,
+    `TAGGING CONFIG (JSON, use as constraints):`,
+    taggingJson,
+    ``,
+    `TASK: You are tagging ONE cropped image asset extracted from a PDF page.`,
+    `You must output ONLY valid JSON (no markdown).`,
+    ``,
+    `CONTEXT:`,
+    `- pageNumber: ${pageNumber}`,
+    `- assetId: ${assetId}`,
+    ``,
+    `PAGE TEXT (use to keep tags coherent with document; do not invent):`,
+    pageText,
+    ``,
+    `OUTPUT SCHEMA (JSON):`,
+    `{`,
+    `  "tags": ["..."],`,
+    `  "rationale": "short reason grounded in page text"`,
+    `}`,
+    ``,
+    `RULES:`,
+    `- tags must be short, lowercase preferred, comma-free strings`,
+    `- max ${maxTags} tags`,
+    `- if uncertain, output fewer tags (not guesses)`,
+    `- rationale must cite words/phrases from the PAGE TEXT when possible`
+  ].join("\n");
+}
+
+async function geminiGenerate(model: GenerativeModel, prompt: string) {
+  const res = await model.generateContent({
+    contents: [{ role: "user", parts: [{ text: prompt }] }],
+    generationConfig: {
+      temperature: 0.2,
+      topP: 0.9,
+      maxOutputTokens: 600
+    }
+  });
+
+  // Primary: response.text()
+  const text = res.response.text?.() ?? "";
+  if (text && text.trim()) return { text, raw: res };
+
+  // Fallback: candidates parts
+  const anyRes = res as unknown as {
+    response?: { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
+  };
+
+  const parts = anyRes.response?.candidates?.[0]?.content?.parts ?? [];
+  const joined = parts.map((p) => (typeof p.text === "string" ? p.text : "")).join("");
+  if (joined && joined.trim()) return { text: joined, raw: res };
+
+  throw new Error("Gemini returned empty response text");
 }
 
 async function callGeminiTagger(args: {
+  apiKey: string;
+  modelName: string;
   aiRules: string;
   taggingJson: string;
-  pageText: string;
   pageNumber: number;
   assetId: string;
-  imageUrl: string;
-}): Promise<TaggingResult> {
-  const apiKey = getEnv("GEMINI_API_KEY");
-  const model = "gemini-2.5-pro";
+  pageText: string;
+}) {
+  const { apiKey, modelName, aiRules, taggingJson, pageNumber, assetId, pageText } = args;
 
-  // Fetch PNG (vision input)
-  const imgRes = await fetch(`${baseUrl(args.imageUrl)}?v=${Date.now()}`, { cache: "no-store" });
-  if (!imgRes.ok) throw new Error(`Cannot fetch image (${imgRes.status})`);
-  const imgBuf = await imgRes.arrayBuffer();
-  const imgB64 = toBase64(imgBuf);
+  const genAI = new GoogleGenerativeAI(apiKey);
+  const model = genAI.getGenerativeModel({ model: modelName });
 
-  const system = `Return ONLY valid JSON with keys: "tags" (array of strings) and "rationale" (string). No markdown. No extra keys.`;
-
-  const promptObj = {
-    aiRules: args.aiRules,
-    taggingJson: args.taggingJson,
-    context: {
-      pageNumber: args.pageNumber,
-      assetId: args.assetId,
-      pageText: args.pageText
-    },
-    instruction:
-      "Generate concise, reusable tags for the IMAGE. Tags must be coherent with pageText. Prefer stable nouns/adjectives useful for retrieval and later LoRA training. Avoid duplicates and overly generic tags."
-  };
-
-  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
-    model
-  )}:generateContent?key=${encodeURIComponent(apiKey)}`;
-
-  const body = {
-    contents: [
-      {
-        role: "user",
-        parts: [
-          { text: system },
-          { text: JSON.stringify(promptObj) },
-          {
-            inlineData: {
-              mimeType: "image/png",
-              data: imgB64
-            }
-          }
-        ]
-      }
-    ],
-    generationConfig: {
-      temperature: 0.2,
-      maxOutputTokens: 512,
-      responseMimeType: "application/json"
-    }
-  };
-
-  const resp = await fetch(endpoint, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body)
-  });
-
-  if (!resp.ok) {
-    const t = await resp.text().catch(() => "");
-    throw new Error(`Gemini error (${resp.status}): ${t || resp.statusText}`);
-  }
-
-  const data = (await resp.json()) as unknown;
-
-  const text =
-    (data as { candidates?: Array<{ content?: { parts?: Array<{ text?: unknown }> } }> }).candidates?.[0]?.content
-      ?.parts?.map((p) => (typeof p.text === "string" ? p.text : ""))
-      .join("") || "";
-
-  if (!text) throw new Error("Gemini returned empty response text");
-
-  const jsonStr = text.trim().startsWith("{") ? text.trim() : extractFirstJsonObject(text);
-  if (!jsonStr) throw new Error("Gemini returned non-JSON output");
-
-  let parsed: TaggingResult;
+  // Read max_tags_per_image from taggingJson if present
+  let maxTags = 20;
   try {
-    parsed = JSON.parse(jsonStr) as TaggingResult;
+    const cfg = JSON.parse(taggingJson) as unknown;
+    if (cfg && typeof cfg === "object") {
+      const mt = (cfg as Record<string, unknown>)["max_tags_per_image"];
+      if (typeof mt === "number" && Number.isFinite(mt) && mt > 0) maxTags = clampInt(mt, 1, 50);
+    }
   } catch {
-    throw new Error("Gemini returned invalid JSON");
+    // ignore
   }
 
-  if (!parsed || !Array.isArray(parsed.tags) || parsed.tags.length === 0 || typeof parsed.rationale !== "string") {
-    throw new Error("Invalid tagger JSON shape");
+  const promptA = buildPrompt({ aiRules, taggingJson, pageNumber, assetId, pageText, maxTags });
+
+  // Retry strategy for empty/invalid JSON
+  const attempts: Array<{ prompt: string }> = [
+    { prompt: promptA },
+    {
+      prompt:
+        promptA +
+        `\n\nIMPORTANT: Output ONLY JSON. No markdown. If you cannot comply, output {"tags":[],"rationale":"insufficient evidence in page text"}.`
+    }
+  ];
+
+  let lastErr: Error | null = null;
+
+  for (let i = 0; i < attempts.length; i++) {
+    try {
+      const { text } = await geminiGenerate(model, attempts[i].prompt);
+
+      const parsed = safeParseJsonFromText(text);
+      if (!parsed || typeof parsed !== "object") throw new Error("Gemini did not return valid JSON");
+
+      const obj = parsed as Record<string, unknown>;
+      const tags = uniqCleanTags(obj.tags, maxTags);
+      const rationale = typeof obj.rationale === "string" ? obj.rationale.trim() : "";
+
+      // Accept even empty tags if rationale exists; otherwise make a safe fallback
+      return {
+        tags,
+        rationale: rationale || (tags.length ? "tags inferred from page text" : "insufficient evidence in page text")
+      };
+    } catch (e) {
+      lastErr = e instanceof Error ? e : new Error(String(e));
+    }
   }
 
-  return { tags: normalizeTags(parsed.tags), rationale: parsed.rationale.trim() };
+  throw lastErr ?? new Error("Gemini tagger failed");
 }
 
 export async function POST(req: Request): Promise<Response> {
-  let body: Body;
   try {
-    body = (await req.json()) as Body;
-  } catch {
-    return NextResponse.json({ ok: false, error: "Invalid JSON body" }, { status: 400 });
-  }
+    const body = (await req.json()) as Body;
 
-  const projectId = String(body.projectId || "").trim();
-  const manifestUrl = String(body.manifestUrl || "").trim();
-  const limitAssets = Math.max(0, Number(body.limitAssets ?? 0));
-  const overwrite = Boolean(body.overwrite ?? false);
+    const projectId = String(body.projectId || "").trim();
+    const manifestUrl = String(body.manifestUrl || "").trim();
+    const overwrite = Boolean(body.overwrite);
+    const limitAssets = typeof body.limitAssets === "number" && Number.isFinite(body.limitAssets) ? body.limitAssets : 0;
 
-  if (!projectId || !manifestUrl) {
-    return NextResponse.json({ ok: false, error: "Missing projectId/manifestUrl" }, { status: 400 });
-  }
-
-  const manifest = await fetchManifest(manifestUrl);
-  if (manifest.projectId !== projectId) {
-    return NextResponse.json({ ok: false, error: "projectId does not match manifest" }, { status: 400 });
-  }
-
-  if (!manifest.docAiJson?.url) {
-    return NextResponse.json({ ok: false, error: "Missing docAiJson.url (run Process Text first)" }, { status: 400 });
-  }
-
-  if (!Array.isArray(manifest.pages) || manifest.pages.length === 0) {
-    return NextResponse.json({ ok: false, error: "No pages found (run Rasterize + Split first)" }, { status: 400 });
-  }
-
-  const raw = await fetchJson<DocAiRaw>(manifest.docAiJson.url);
-
-  const aiRules = manifest.settings?.aiRules ?? "";
-  const taggingJson = manifest.settings?.taggingJson ?? "{}";
-
-  let scanned = 0;
-  let tagged = 0;
-
-  for (const page of manifest.pages) {
-    if (!Array.isArray(page.assets) || page.assets.length === 0) continue;
-
-    const pageText = pageTextFromDocAi(raw, page.pageNumber);
-
-    for (const asset of page.assets) {
-      scanned += 1;
-      if (limitAssets > 0 && scanned > limitAssets) break;
-
-      const alreadyTagged = Array.isArray(asset.tags) && asset.tags.length > 0;
-      if (alreadyTagged && !overwrite) continue;
-
-      const res = await callGeminiTagger({
-        aiRules,
-        taggingJson,
-        pageText,
-        pageNumber: page.pageNumber,
-        assetId: asset.assetId,
-        imageUrl: asset.url
-      });
-
-      asset.tags = res.tags;
-      asset.tagRationale = res.rationale;
-      tagged += 1;
+    if (!projectId || !manifestUrl) {
+      return NextResponse.json({ ok: false, error: "Missing projectId/manifestUrl" }, { status: 400 });
     }
 
-    if (limitAssets > 0 && scanned > limitAssets) break;
+    const GEMINI_API_KEY = mustEnv("GEMINI_API_KEY");
+    // Default to a modern model name; you can override via env
+    const GEMINI_MODEL = optEnv("GEMINI_MODEL", "gemini-2.0-flash");
+
+    const manifest = await fetchJson<ProjectManifest>(manifestUrl);
+
+    if (manifest.projectId !== projectId) {
+      return NextResponse.json({ ok: false, error: "projectId does not match manifest" }, { status: 400 });
+    }
+
+    if (!manifest.extractedText?.url) {
+      return NextResponse.json({ ok: false, error: "No extractedText in manifest" }, { status: 400 });
+    }
+
+    if (!manifest.pages || !Array.isArray(manifest.pages) || manifest.pages.length === 0) {
+      return NextResponse.json({ ok: false, error: "No pages in manifest" }, { status: 400 });
+    }
+
+    // Full text (fallback) — later you can store per-page text in DocAI JSON
+    const fullText = await fetchText(manifest.extractedText.url);
+
+    const aiRules = manifest.settings?.aiRules ?? "";
+    const taggingJson = manifest.settings?.taggingJson ?? "{}";
+
+    let totalConsidered = 0;
+    let totalTagged = 0;
+
+    for (const page of manifest.pages) {
+      const pageNumber = page.pageNumber;
+      const pageText = getPageTextFallback(fullText, pageNumber);
+
+      const assets = Array.isArray(page.assets) ? page.assets : [];
+      if (!assets.length) continue;
+
+      for (const asset of assets) {
+        totalConsidered += 1;
+        if (limitAssets > 0 && totalConsidered > limitAssets) break;
+
+        const alreadyTagged = Array.isArray(asset.tags) && asset.tags.length > 0;
+        if (alreadyTagged && !overwrite) continue;
+
+        const { tags, rationale } = await callGeminiTagger({
+          apiKey: GEMINI_API_KEY,
+          modelName: GEMINI_MODEL,
+          aiRules,
+          taggingJson,
+          pageNumber,
+          assetId: asset.assetId,
+          pageText
+        });
+
+        (asset as PageAsset).tags = tags;
+        (asset as PageAsset).tagRationale = rationale;
+        totalTagged += 1;
+      }
+
+      if (limitAssets > 0 && totalConsidered > limitAssets) break;
+    }
+
+    const newManifestUrl = await saveManifest(manifest);
+
+    return NextResponse.json({
+      ok: true,
+      manifestUrl: newManifestUrl,
+      considered: totalConsidered,
+      tagged: totalTagged,
+      model: GEMINI_MODEL
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return NextResponse.json({ ok: false, error: msg }, { status: 500 });
   }
-
-  const newManifestUrl = await saveManifest(manifest);
-
-  return NextResponse.json({ ok: true, manifestUrl: newManifestUrl, scanned, tagged });
 }
