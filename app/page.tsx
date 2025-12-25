@@ -251,11 +251,12 @@ async function deleteAsset(pageNumber: number, assetId: string, assetUrl: string
       body: JSON.stringify({ projectId, manifestUrl, pageNumber, assetId, assetUrl })
     });
 
-    const j = (await r.json().catch(() => null)) as { ok?: boolean; manifestUrl?: string; error?: string } | null;
-    if (!r.ok || !j?.ok || !j.manifestUrl) throw new Error(j?.error || `Delete failed (${r.status})`);
+ const j = (await r.json()) as { ok: boolean; manifestUrl?: string; manifest?: Manifest; error?: string };
+if (!r.ok || !j.ok || !j.manifestUrl || !j.manifest) throw new Error(j.error || `Delete failed (${r.status})`);
 
-    setManifestUrl(j.manifestUrl);
-    setUrlParams(projectId, j.manifestUrl);
+setManifestUrl(j.manifestUrl);
+setUrlParams(projectId, j.manifestUrl);
+setManifest(j.manifest);
     await loadManifest(j.manifestUrl);
     await refreshProjects();
   } catch (e) {
