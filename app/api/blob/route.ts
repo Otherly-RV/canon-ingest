@@ -1,12 +1,13 @@
-import { handleUpload } from "@vercel/blob/client";
+import { handleUpload, type HandleUploadBody } from "@vercel/blob/client";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(request: Request): Promise<Response> {
-  // Newer @vercel/blob types require `body` in HandleUploadOptions
-  // The client posts JSON, so parse it once and pass it through.
-  const body = (await request.json()) as unknown;
+  // Clone so we can safely read JSON without consuming the original stream
+  const cloned = request.clone();
+
+  const body = (await cloned.json()) as HandleUploadBody;
 
   const result = await handleUpload({
     request,
