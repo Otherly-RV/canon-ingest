@@ -235,8 +235,6 @@ export default function Page() {
 
         const page = await pdf.getPage(pageNumber);
 
-        // IMPORTANT: scale affects PNG size. 2.0 can be big for high-res PDFs.
-        // If you want fewer payload issues overall (and faster), use 1.5.
         const scale = 1.5;
         const viewport = page.getViewport({ scale });
 
@@ -255,17 +253,11 @@ export default function Page() {
 
         const file = new File([pngBlob], `page-${pageNumber}.png`, { type: "image/png" });
 
-        // ✅ Direct Blob upload (bypasses Vercel Function payload limits)
-        const blob = await upload(
-          `projects/${projectId}/pages/page-${pageNumber}.png`,
-          file,
-          {
-            access: "public",
-            handleUploadUrl: "/api/blob"
-          }
-        );
+        const blob = await upload(`projects/${projectId}/pages/page-${pageNumber}.png`, file, {
+          access: "public",
+          handleUploadUrl: "/api/blob"
+        });
 
-        // ✅ Small JSON call to update manifest
         await recordPage(pageNumber, blob.url, canvas.width, canvas.height);
 
         setRasterProgress((p) => ({ ...p, uploaded: p.uploaded + 1 }));
@@ -353,7 +345,6 @@ export default function Page() {
 
       <div style={{ marginTop: 18, borderTop: "1px solid rgba(0,0,0,0.2)" }} />
 
-      {/* Cloud state (always there) */}
       <div style={{ marginTop: 18, border: "1px solid #000", borderRadius: 12 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: 14 }}>
           <div style={{ fontWeight: 800 }}>Cloud state</div>
