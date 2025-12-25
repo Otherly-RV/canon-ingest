@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
+import { upload } from "@vercel/blob/client";
 
 type Manifest = {
   projectId: string;
@@ -68,6 +69,20 @@ function bust(url: string) {
 function setPdfJsWorker(pdfjs: PdfJsLib) {
   if (!pdfjs.GlobalWorkerOptions) return;
   pdfjs.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url).toString();
+}
+
+function Chevron({ up }: { up: boolean }) {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path
+        d={up ? "M6 14l6-6 6 6" : "M6 10l6 6 6-6"}
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
 }
 
 export default function Page() {
@@ -177,6 +192,23 @@ export default function Page() {
     }
   }
 
+  async function recordPage(pageNumber: number, url: string, width: number, height: number) {
+    const r = await fetch("/api/projects/pages/record", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ projectId, manifestUrl, pageNumber, url, width, height })
+    });
+
+    if (!r.ok) throw new Error(`Record page ${pageNumber} failed: ${await readErrorText(r)}`);
+
+    const j = (await r.json()) as { ok: boolean; manifestUrl?: string; error?: string };
+    if (!j.ok || !j.manifestUrl) throw new Error(j.error || `Record page ${pageNumber} failed (bad response)`);
+
+    setManifestUrl(j.manifestUrl);
+    setUrlParams(projectId, j.manifestUrl);
+    await loadManifest(j.manifestUrl);
+  }
+
   async function rasterizeToPngs() {
     setLastError("");
 
@@ -184,13 +216,12 @@ export default function Page() {
     if (!manifest?.sourcePdf?.url) return setLastError("No source PDF in manifest (upload a PDF first).");
     if (busy || rasterProgress.running) return;
 
-    setBusy("Rasterizing PDF pages to PNG (client-side) and uploading...");
+    setBusy("Rasterizing PDF pages to PNG (client-side) and uploading directly to Blob...");
     setRasterProgress({ running: true, currentPage: 0, totalPages: 0, uploaded: 0 });
 
     try {
       const pdfjsImport = (await import("pdfjs-dist")) as unknown;
       const pdfjs = pdfjsImport as PdfJsLib;
-
       setPdfJsWorker(pdfjs);
 
       const loadingTask = pdfjs.getDocument({ url: manifest.sourcePdf.url, withCredentials: false });
@@ -204,7 +235,9 @@ export default function Page() {
 
         const page = await pdf.getPage(pageNumber);
 
-        const scale = 2.0; // adjust if you want higher/lower res
+        // IMPORTANT: scale affects PNG size. 2.0 can be big for high-res PDFs.
+        // If you want fewer payload issues overall (and faster), use 1.5.
+        const scale = 1.5;
         const viewport = page.getViewport({ scale });
 
         const canvas = document.createElement("canvas");
@@ -222,23 +255,18 @@ export default function Page() {
 
         const file = new File([pngBlob], `page-${pageNumber}.png`, { type: "image/png" });
 
-        const form = new FormData();
-        form.append("file", file);
-        form.append("projectId", projectId);
-        form.append("manifestUrl", manifestUrl);
-        form.append("pageNumber", String(pageNumber));
-        form.append("width", String(canvas.width));
-        form.append("height", String(canvas.height));
+        // ✅ Direct Blob upload (bypasses Vercel Function payload limits)
+        const blob = await upload(
+          `projects/${projectId}/pages/page-${pageNumber}.png`,
+          file,
+          {
+            access: "public",
+            handleUploadUrl: "/api/blob"
+          }
+        );
 
-        const r = await fetch("/api/projects/pages/upload", { method: "POST", body: form });
-        if (!r.ok) throw new Error(`Upload page ${pageNumber} failed: ${await readErrorText(r)}`);
-
-        const j = (await r.json()) as { ok: boolean; manifestUrl?: string; error?: string };
-        if (!j.ok || !j.manifestUrl) throw new Error(j.error || `Upload page ${pageNumber} failed (bad response)`);
-
-        setManifestUrl(j.manifestUrl);
-        setUrlParams(projectId, j.manifestUrl);
-        await loadManifest(j.manifestUrl);
+        // ✅ Small JSON call to update manifest
+        await recordPage(pageNumber, blob.url, canvas.width, canvas.height);
 
         setRasterProgress((p) => ({ ...p, uploaded: p.uploaded + 1 }));
       }
@@ -256,10 +284,7 @@ export default function Page() {
     <div style={{ minHeight: "100vh", padding: 28 }}>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 16 }}>
         <div>
-          <div style={{ fontSize: 22, fontWeight: 800, letterSpacing: -0.3 }}>OTHERLY — Ingest</div>
-          <div style={{ marginTop: 6, fontSize: 13, opacity: 0.75 }}>
-            Step 6: Rasterize PDF → PNG pages → store online in Blob → update manifest
-          </div>
+          <div style={{ fontSize: 22, fontWeight: 800, letterSpacing: -0.3 }}>OTHERLY — Ingest 1.0</div>
         </div>
 
         <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
@@ -328,15 +353,26 @@ export default function Page() {
 
       <div style={{ marginTop: 18, borderTop: "1px solid rgba(0,0,0,0.2)" }} />
 
+      {/* Cloud state (always there) */}
       <div style={{ marginTop: 18, border: "1px solid #000", borderRadius: 12 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: 14 }}>
           <div style={{ fontWeight: 800 }}>Cloud state</div>
+
           <button
             type="button"
+            aria-label={cloudOpen ? "Collapse cloud state" : "Expand cloud state"}
             onClick={() => setCloudOpen((v) => !v)}
-            style={{ border: "1px solid #000", background: "#fff", padding: "6px 10px", borderRadius: 10 }}
+            style={{
+              border: "1px solid #000",
+              background: "#fff",
+              width: 36,
+              height: 30,
+              borderRadius: 10,
+              display: "grid",
+              placeItems: "center"
+            }}
           >
-            {cloudOpen ? "Collapse" : "Expand"}
+            <Chevron up={cloudOpen} />
           </button>
         </div>
 
