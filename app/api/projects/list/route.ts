@@ -23,6 +23,11 @@ type Manifest = {
   pages?: Array<{ pageNumber: number; url: string }>;
 };
 
+type ListResult = {
+  blobs: Array<{ url: string; pathname?: string }>;
+  cursor?: string | null;
+};
+
 async function safeFetchManifest(url: string): Promise<Manifest | null> {
   try {
     const res = await fetch(`${url}?v=${Date.now()}`, {
@@ -39,29 +44,32 @@ async function safeFetchManifest(url: string): Promise<Manifest | null> {
 }
 
 export async function GET(): Promise<Response> {
-  // Collect all manifest.json blobs under projects/
   const manifestBlobs: Array<{ url: string; pathname: string }> = [];
 
   let cursor: string | undefined = undefined;
+
   for (;;) {
-    const page = await list({
+    const page = (await list({
       prefix: "projects/",
       limit: 1000,
       cursor
-    });
+    })) as unknown as ListResult;
 
     for (const b of page.blobs) {
-      if (typeof b.pathname === "string" && b.pathname.endsWith("/manifest.json")) {
-        manifestBlobs.push({ url: b.url, pathname: b.pathname });
+      const pathname = typeof b.pathname === "string" ? b.pathname : "";
+      if (pathname.endsWith("/manifest.json")) {
+        manifestBlobs.push({ url: b.url, pathname });
       }
     }
 
-    cursor = page.cursor ?? undefined;
+    const next = page.cursor ?? undefined;
+    cursor = typeof next === "string" && next.length > 0 ? next : undefined;
+
     if (!cursor) break;
   }
 
-  // Fetch manifests to show human info
   const rows: ProjectRow[] = [];
+
   for (const mb of manifestBlobs) {
     const m = await safeFetchManifest(mb.url);
     if (!m) continue;
@@ -77,7 +85,6 @@ export async function GET(): Promise<Response> {
     });
   }
 
-  // Sort newest first (fallback to manifestUrl if createdAt missing)
   rows.sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
 
   return NextResponse.json({ ok: true, projects: rows });
