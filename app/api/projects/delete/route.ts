@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { del } from "@vercel/blob";
+import { del, list } from "@vercel/blob";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -19,7 +19,25 @@ export async function POST(req: Request): Promise<Response> {
     return NextResponse.json({ ok: false, error: "Missing projectId" }, { status: 400 });
   }
 
-  await del({ prefix: `projects/${projectId}/` });
+  const prefix = `projects/${projectId}/`;
 
-  return NextResponse.json({ ok: true, deletedPrefix: `projects/${projectId}/` });
+  // 1) List all blobs under prefix (paginate)
+  const urls: string[] = [];
+  let cursor: string | undefined = undefined;
+
+  for (;;) {
+    const page = await list({ prefix, limit: 1000, cursor });
+    for (const b of page.blobs) {
+      urls.push(b.url);
+    }
+    cursor = page.cursor ?? undefined;
+    if (!cursor) break;
+  }
+
+  // 2) Delete by URL array (this matches older/newer @vercel/blob types)
+  if (urls.length > 0) {
+    await del(urls);
+  }
+
+  return NextResponse.json({ ok: true, deletedPrefix: prefix, deletedCount: urls.length });
 }
