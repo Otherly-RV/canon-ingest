@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { upload } from "@vercel/blob/client";
 
 type AssetBBox = { x: number; y: number; w: number; h: number };
@@ -10,7 +10,6 @@ type PageAsset = {
   url: string;
   bbox: AssetBBox;
   tags?: string[];
-  tagRationale?: string;
 };
 
 type Manifest = {
@@ -25,7 +24,7 @@ type Manifest = {
     url: string;
     width: number;
     height: number;
-    tags?: string[]; // legacy, not used
+    tags?: string[];
     assets?: PageAsset[];
   }>;
   settings: {
@@ -47,10 +46,10 @@ type ProjectRow = {
 
 type PdfJsLib = {
   getDocument: (opts: { url: string; withCredentials?: boolean }) => PdfLoadingTask;
-  GlobalWorkerOptions?: { workerSrc: string };
+  GlobalWorkerOptions: { workerSrc: string };
 };
 
-type PdfLoadingTask = { promise: Promise<unknown> };
+type PdfLoadingTask = { promise: Promise<PdfDocument> };
 
 type PdfDocument = {
   numPages: number;
@@ -102,7 +101,6 @@ function bust(url: string) {
 }
 
 function setPdfJsWorker(pdfjs: PdfJsLib) {
-  if (!pdfjs.GlobalWorkerOptions) return;
   pdfjs.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url).toString();
 }
 
@@ -119,13 +117,7 @@ function Chevron({ up }: { up: boolean }) {
     </svg>
   );
 }
-function XIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-    </svg>
-  );
-}
+
 function Trash() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -154,6 +146,14 @@ function Refresh() {
   );
 }
 
+function XIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 function Tabs({
   value,
   onChange
@@ -173,7 +173,16 @@ function Tabs({
   });
 
   return (
-    <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+    <div
+      style={{
+        display: "flex",
+        gap: 8,
+        alignItems: "center",
+        flexWrap: "wrap",
+        maxWidth: "100%",
+        overflow: "hidden"
+      }}
+    >
       <button type="button" onClick={() => onChange("ai")} style={tabStyle(value === "ai")}>
         AI Rules
       </button>
@@ -186,7 +195,7 @@ function Tabs({
 
 export default function Page() {
   const fileRef = useRef<HTMLInputElement>(null);
-const [deletingAssets, setDeletingAssets] = useState<Record<string, boolean>>({});
+
   const [busy, setBusy] = useState("");
   const [projectId, setProjectId] = useState<string>("");
   const [manifestUrl, setManifestUrl] = useState<string>("");
@@ -207,8 +216,6 @@ const [deletingAssets, setDeletingAssets] = useState<Record<string, boolean>>({}
   const [aiRulesDraft, setAiRulesDraft] = useState<string>("");
   const [taggingJsonDraft, setTaggingJsonDraft] = useState<string>("");
 
-  const [assetsOpen, setAssetsOpen] = useState(true);
-
   const [rasterProgress, setRasterProgress] = useState({
     running: false,
     currentPage: 0,
@@ -222,73 +229,28 @@ const [deletingAssets, setDeletingAssets] = useState<Record<string, boolean>>({}
     totalPages: 0,
     assetsUploaded: 0
   });
-async function deleteAsset(pageNumber: number, assetId: string, assetUrl: string) {
-  if (!projectId || !manifestUrl) return;
 
-  const key = `${pageNumber}-${assetId}`;
-  if (deletingAssets[key]) return; // hard lock
+  const [assetsOpen, setAssetsOpen] = useState(true);
+  const [deletingAssets, setDeletingAssets] = useState<Record<string, boolean>>({});
 
-  setDeletingAssets((m) => ({ ...m, [key]: true }));
-  setLastError("");
-
-  // Optimistic remove from UI immediately
-  setManifest((prev) => {
-    if (!prev?.pages) return prev;
-    return {
-      ...prev,
-      pages: prev.pages.map((p) => {
-        if (p.pageNumber !== pageNumber) return p;
-        const assets = Array.isArray(p.assets) ? p.assets : [];
-        return { ...p, assets: assets.filter((a) => a.assetId !== assetId) };
-      })
-    };
-  });
-
-  try {
-    const r = await fetch("/api/projects/assets/delete", {
+  async function loadManifest(url: string) {
+    const mRes = await fetch("/api/projects/manifest/read", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ projectId, manifestUrl, pageNumber, assetId, assetUrl })
+      body: JSON.stringify({ manifestUrl: url })
     });
 
- const j = (await r.json()) as { ok: boolean; manifestUrl?: string; manifest?: Manifest; error?: string };
-if (!r.ok || !j.ok || !j.manifestUrl || !j.manifest) throw new Error(j.error || `Delete failed (${r.status})`);
+    if (!mRes.ok) throw new Error(`Failed to read manifest: ${await readErrorText(mRes)}`);
 
-setManifestUrl(j.manifestUrl);
-setUrlParams(projectId, j.manifestUrl);
-setManifest(j.manifest);
-    await loadManifest(j.manifestUrl);
-    await refreshProjects();
-  } catch (e) {
-    // If server failed, restore by reloading manifest (source of truth)
-    setLastError(e instanceof Error ? e.message : String(e));
-    await loadManifest(manifestUrl);
-  } finally {
-    setDeletingAssets((m) => {
-      const copy = { ...m };
-      delete copy[key];
-      return copy;
-    });
+    const payload = (await mRes.json()) as { ok: boolean; manifest?: Manifest; error?: string };
+    if (!payload.ok || !payload.manifest) throw new Error(payload.error || "Bad manifest read response");
+
+    const m = payload.manifest;
+    setManifest(m);
+    setAiRulesDraft(m.settings?.aiRules ?? "");
+    setTaggingJsonDraft(m.settings?.taggingJson ?? "");
+    return m;
   }
-}
-async function loadManifest(url: string) {
-  const mRes = await fetch("/api/projects/manifest/read", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ manifestUrl: url })
-  });
-
-  if (!mRes.ok) throw new Error(`Failed to read manifest: ${await readErrorText(mRes)}`);
-
-  const payload = (await mRes.json()) as { ok: boolean; manifest?: Manifest; error?: string };
-  if (!payload.ok || !payload.manifest) throw new Error(payload.error || "Bad manifest read response");
-
-  const m = payload.manifest;
-  setManifest(m);
-  setAiRulesDraft(m.settings?.aiRules ?? "");
-  setTaggingJsonDraft(m.settings?.taggingJson ?? "");
-  return m;
-}
 
   async function refreshProjects() {
     setProjectsBusy(true);
@@ -303,18 +265,6 @@ async function loadManifest(url: string) {
     } finally {
       setProjectsBusy(false);
     }
-  }
-
-  async function restoreProjectState(pid: string, murl: string): Promise<string> {
-    const r = await fetch("/api/projects/restore", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ projectId: pid, manifestUrl: murl })
-    });
-    if (!r.ok) throw new Error(await readErrorText(r));
-    const j = (await r.json()) as { ok: boolean; manifestUrl?: string; error?: string };
-    if (!j.ok || !j.manifestUrl) throw new Error(j.error || "Restore failed (bad response)");
-    return j.manifestUrl;
   }
 
   useEffect(() => {
@@ -417,7 +367,6 @@ async function loadManifest(url: string) {
 
     setManifestUrl(j.manifestUrl);
     setUrlParams(projectId, j.manifestUrl);
-
     await loadManifest(j.manifestUrl);
   }
 
@@ -432,13 +381,11 @@ async function loadManifest(url: string) {
     setRasterProgress({ running: true, currentPage: 0, totalPages: 0, uploaded: 0 });
 
     try {
-      const pdfjsImport = (await import("pdfjs-dist")) as unknown;
-      const pdfjs = pdfjsImport as PdfJsLib;
-      setPdfJsWorker(pdfjs);
+      const pdfjsImport = (await import("pdfjs-dist")) as unknown as PdfJsLib;
+      setPdfJsWorker(pdfjsImport);
 
-      const loadingTask = pdfjs.getDocument({ url: manifest.sourcePdf.url, withCredentials: false });
-      const pdfUnknown = await loadingTask.promise;
-      const pdf = pdfUnknown as PdfDocument;
+      const loadingTask = pdfjsImport.getDocument({ url: manifest.sourcePdf.url, withCredentials: false });
+      const pdf = await loadingTask.promise;
 
       const totalPages = Number(pdf.numPages) || 0;
       setRasterProgress((p) => ({ ...p, totalPages }));
@@ -447,7 +394,7 @@ async function loadManifest(url: string) {
         setRasterProgress((p) => ({ ...p, currentPage: pageNumber }));
 
         const page = await pdf.getPage(pageNumber);
-        const scale = 1.5;
+        const scale = 1.25;
         const viewport = page.getViewport({ scale });
 
         const canvas = document.createElement("canvas");
@@ -484,159 +431,134 @@ async function loadManifest(url: string) {
     }
   }
 
-  async function recordAsset(pageNumber: number, assetId: string, url: string, bbox: AssetBBox) {
-    const r = await fetch("/api/projects/assets/record", {
+  async function recordAssetsBulk(pageNumber: number, assets: Array<{ assetId: string; url: string; bbox: AssetBBox }>) {
+    const r = await fetch("/api/projects/assets/record-bulk", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ projectId, manifestUrl, pageNumber, assetId, url, bbox })
+      body: JSON.stringify({ projectId, manifestUrl, pageNumber, assets })
     });
 
     if (!r.ok) throw new Error(await readErrorText(r));
 
     const j = (await r.json()) as { ok: boolean; manifestUrl?: string; error?: string };
-    if (!j.ok || !j.manifestUrl) throw new Error(j.error || "Record asset failed (bad response)");
+    if (!j.ok || !j.manifestUrl) throw new Error(j.error || "Record bulk failed (bad response)");
 
     setManifestUrl(j.manifestUrl);
     setUrlParams(projectId, j.manifestUrl);
     await loadManifest(j.manifestUrl);
   }
-async function recordAssetsBulk(pageNumber: number, assets: Array<{ assetId: string; url: string; bbox: AssetBBox }>) {
-  const r = await fetch("/api/projects/assets/record-bulk", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ projectId, manifestUrl, pageNumber, assets })
-  });
 
-  if (!r.ok) throw new Error(await readErrorText(r));
-
-  const j = (await r.json()) as { ok: boolean; manifestUrl?: string; error?: string };
-  if (!j.ok || !j.manifestUrl) throw new Error(j.error || "Record bulk failed (bad response)");
-
-  setManifestUrl(j.manifestUrl);
-  setUrlParams(projectId, j.manifestUrl);
-  await loadManifest(j.manifestUrl);
-}
-async function splitImages() {
-  setLastError("");
-
-  if (!projectId || !manifestUrl) return setLastError("Missing projectId/manifestUrl");
-  if (!manifest?.docAiJson?.url) return setLastError("No DocAI JSON");
-  if (!manifest.pages?.length) return setLastError("No page PNGs");
-  if (busy || splitProgress.running) return;
-
-  setBusy("Splitting...");
-  setSplitProgress({ running: true, page: 0, totalPages: manifest.pages.length, assetsUploaded: 0 });
-
-  try {
-    const detectRes = await fetch("/api/projects/assets/detect", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ projectId, manifestUrl })
-    });
-
-    if (!detectRes.ok) throw new Error(await readErrorText(detectRes));
-
-    const detected = (await detectRes.json()) as {
-      ok: boolean;
-      pages?: Array<{ pageNumber: number; boxes: AssetBBox[] }>;
-      error?: string;
-    };
-
-    if (!detected.ok || !Array.isArray(detected.pages)) throw new Error(detected.error || "Detect failed (bad response)");
-
-    const byPage = new Map<number, AssetBBox[]>();
-    for (const p of detected.pages) {
-      byPage.set(p.pageNumber, Array.isArray(p.boxes) ? p.boxes : []);
-    }
-
-    // Use the current manifest state for page URLs/sizes
-    const pages = manifest.pages;
-
-    for (const page of pages) {
-      setSplitProgress((s) => ({ ...s, page: page.pageNumber }));
-
-      const boxes = byPage.get(page.pageNumber) ?? [];
-      if (boxes.length === 0) continue;
-
-      const img = await new Promise<HTMLImageElement>((resolve, reject) => {
-        const el = new Image();
-        el.crossOrigin = "anonymous";
-        el.onload = () => resolve(el);
-        el.onerror = () => reject(new Error(`Failed to load page image p${page.pageNumber}`));
-        el.src = bust(page.url);
-      });
-
-      const uploadedForPage: Array<{ assetId: string; url: string; bbox: AssetBBox }> = [];
-
-      for (let i = 0; i < boxes.length; i++) {
-        const b = boxes[i];
-
-        const canvas = document.createElement("canvas");
-        const ctx = canvas.getContext("2d");
-        if (!ctx) throw new Error("Cannot create canvas 2D context");
-
-        canvas.width = Math.max(1, Math.floor(b.w));
-        canvas.height = Math.max(1, Math.floor(b.h));
-
-        ctx.drawImage(img, b.x, b.y, b.w, b.h, 0, 0, canvas.width, canvas.height);
-
-        const pngBlob = await new Promise<Blob>((resolve, reject) => {
-          canvas.toBlob((bb) => (bb ? resolve(bb) : reject(new Error("toBlob returned null"))), "image/png");
-        });
-
-        const assetId = `p${page.pageNumber}-img${String(i + 1).padStart(2, "0")}`;
-        const file = new File([pngBlob], `${assetId}.png`, { type: "image/png" });
-
-        const uploaded = await upload(`projects/${projectId}/assets/p${page.pageNumber}/${assetId}.png`, file, {
-          access: "public",
-          handleUploadUrl: "/api/blob"
-        });
-
-        uploadedForPage.push({ assetId, url: uploaded.url, bbox: b });
-
-        setSplitProgress((s) => ({ ...s, assetsUploaded: s.assetsUploaded + 1 }));
-      }
-
-      // ✅ single manifest write per page
-      if (uploadedForPage.length > 0) {
-        await recordAssetsBulk(page.pageNumber, uploadedForPage);
-      }
-    }
-
-    await refreshProjects();
-  } catch (e) {
-    setLastError(e instanceof Error ? e.message : String(e));
-  } finally {
-    setBusy("");
-    setSplitProgress((s) => ({ ...s, running: false }));
-  }
-}
-
-  async function tagImages() {
+  async function splitImages() {
     setLastError("");
 
     if (!projectId || !manifestUrl) return setLastError("Missing projectId/manifestUrl");
     if (!manifest?.docAiJson?.url) return setLastError("No DocAI JSON");
-    if (!manifest?.pages?.length) return setLastError("No pages/assets");
-    if (busy) return;
+    if (!manifest.pages?.length) return setLastError("No page PNGs");
+    if (busy || splitProgress.running) return;
 
-    setBusy("Tagging...");
+    setBusy("Splitting...");
+    setSplitProgress({ running: true, page: 0, totalPages: manifest.pages.length, assetsUploaded: 0 });
 
     try {
-      const r = await fetch("/api/projects/assets/tag", {
+      const detectRes = await fetch("/api/projects/assets/detect", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ projectId, manifestUrl })
       });
 
-      if (!r.ok) throw new Error(await readErrorText(r));
+      if (!detectRes.ok) throw new Error(await readErrorText(detectRes));
+
+      const detected = (await detectRes.json()) as {
+        ok: boolean;
+        pages?: Array<{ pageNumber: number; boxes: AssetBBox[] }>;
+        error?: string;
+      };
+
+      if (!detected.ok || !Array.isArray(detected.pages)) throw new Error(detected.error || "Detect failed (bad response)");
+
+      const byPage = new Map<number, AssetBBox[]>();
+      for (const p of detected.pages) {
+        byPage.set(p.pageNumber, Array.isArray(p.boxes) ? p.boxes : []);
+      }
+
+      const pages = manifest.pages;
+
+      for (const page of pages) {
+        setSplitProgress((s) => ({ ...s, page: page.pageNumber }));
+
+        const boxes = byPage.get(page.pageNumber) ?? [];
+        if (boxes.length === 0) continue;
+
+        const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+          const el = new Image();
+          el.crossOrigin = "anonymous";
+          el.onload = () => resolve(el);
+          el.onerror = () => reject(new Error(`Failed to load page image p${page.pageNumber}`));
+          el.src = bust(page.url);
+        });
+
+        const uploadedForPage: Array<{ assetId: string; url: string; bbox: AssetBBox }> = [];
+
+        for (let i = 0; i < boxes.length; i++) {
+          const b = boxes[i];
+
+          const canvas = document.createElement("canvas");
+          const ctx = canvas.getContext("2d");
+          if (!ctx) throw new Error("Cannot create canvas 2D context");
+
+          canvas.width = Math.max(1, Math.floor(b.w));
+          canvas.height = Math.max(1, Math.floor(b.h));
+
+          ctx.drawImage(img, b.x, b.y, b.w, b.h, 0, 0, canvas.width, canvas.height);
+
+          const pngBlob = await new Promise<Blob>((resolve, reject) => {
+            canvas.toBlob((bb) => (bb ? resolve(bb) : reject(new Error("toBlob returned null"))), "image/png");
+          });
+
+          const assetId = `p${page.pageNumber}-img${String(i + 1).padStart(2, "0")}`;
+          const file = new File([pngBlob], `${assetId}.png`, { type: "image/png" });
+
+          const uploaded = await upload(`projects/${projectId}/assets/p${page.pageNumber}/${assetId}.png`, file, {
+            access: "public",
+            handleUploadUrl: "/api/blob"
+          });
+
+          uploadedForPage.push({ assetId, url: uploaded.url, bbox: b });
+
+          setSplitProgress((s) => ({ ...s, assetsUploaded: s.assetsUploaded + 1 }));
+        }
+
+        if (uploadedForPage.length > 0) {
+          await recordAssetsBulk(page.pageNumber, uploadedForPage);
+        }
+      }
+
+      await refreshProjects();
+    } catch (e) {
+      setLastError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy("");
+      setSplitProgress((s) => ({ ...s, running: false }));
+    }
+  }
+
+  async function rebuildAssets() {
+    setLastError("");
+    if (!projectId || !manifestUrl) return;
+
+    setBusy("Rebuilding assets...");
+    try {
+      const r = await fetch("/api/projects/assets/rebuild-index", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId, manifestUrl })
+      });
 
       const j = (await r.json()) as { ok: boolean; manifestUrl?: string; error?: string };
-      if (!j.ok || !j.manifestUrl) throw new Error(j.error || "Tagging failed (bad response)");
+      if (!r.ok || !j.ok || !j.manifestUrl) throw new Error(j.error || `Rebuild failed (${r.status})`);
 
       setManifestUrl(j.manifestUrl);
       setUrlParams(projectId, j.manifestUrl);
-
       await loadManifest(j.manifestUrl);
       await refreshProjects();
     } catch (e) {
@@ -686,16 +608,11 @@ async function splitImages() {
     setUrlParams(p.projectId, p.manifestUrl);
 
     try {
-      // Restore previous state automatically (pages/assets from Blob)
-      const restoredManifestUrl = await restoreProjectState(p.projectId, p.manifestUrl);
-
-      setManifestUrl(restoredManifestUrl);
-      setUrlParams(p.projectId, restoredManifestUrl);
-
-      await loadManifest(restoredManifestUrl);
-      await refreshProjects();
+      await loadManifest(p.manifestUrl);
     } catch (e) {
-      setLastError(e instanceof Error ? e.message : String(e));
+      const msg = e instanceof Error ? e.message : String(e);
+      setLastError(msg);
+      await refreshProjects();
     }
   }
 
@@ -738,30 +655,162 @@ async function splitImages() {
     }
   }
 
+  async function deleteAsset(pageNumber: number, assetId: string) {
+    if (!projectId || !manifestUrl) return;
+
+    const key = `${pageNumber}-${assetId}`;
+    if (deletingAssets[key]) return;
+
+    setDeletingAssets((m) => ({ ...m, [key]: true }));
+    setLastError("");
+
+    setManifest((prev) => {
+      if (!prev?.pages) return prev;
+      return {
+        ...prev,
+        pages: prev.pages.map((p) => {
+          if (p.pageNumber !== pageNumber) return p;
+          const assets = Array.isArray(p.assets) ? p.assets : [];
+          return { ...p, assets: assets.filter((a) => a.assetId !== assetId) };
+        })
+      };
+    });
+
+    try {
+      const r = await fetch("/api/projects/assets/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId, manifestUrl, pageNumber, assetId })
+      });
+
+      const j = (await r.json().catch(() => null)) as { ok?: boolean; manifestUrl?: string; error?: string } | null;
+      if (!r.ok || !j?.ok || !j.manifestUrl) throw new Error(j?.error || `Delete failed (${r.status})`);
+
+      setManifestUrl(j.manifestUrl);
+      setUrlParams(projectId, j.manifestUrl);
+      await loadManifest(j.manifestUrl);
+      await refreshProjects();
+    } catch (e) {
+      setLastError(e instanceof Error ? e.message : String(e));
+      await loadManifest(manifestUrl);
+    } finally {
+      setDeletingAssets((m) => {
+        const copy = { ...m };
+        delete copy[key];
+        return copy;
+      });
+    }
+  }
+
   const pagesCount = manifest?.pages?.length ?? 0;
 
   const totalAssetsCount =
-    (manifest?.pages ?? []).reduce((acc, p) => acc + ((p.assets ?? []).length), 0) ?? 0;
+    (manifest?.pages ?? []).reduce((acc, p) => acc + (Array.isArray(p.assets) ? p.assets.length : 0), 0) ?? 0;
 
-  const taggedAssetsCount =
-    (manifest?.pages ?? []).reduce(
-      (acc, p) => acc + ((p.assets ?? []).filter((a) => (a.tags ?? []).length > 0).length),
-      0
-    ) ?? 0;
+  const assetsFlat = useMemo(() => {
+    const out: Array<{ pageNumber: number; asset: PageAsset }> = [];
+    for (const p of manifest?.pages ?? []) {
+      for (const a of p.assets ?? []) out.push({ pageNumber: p.pageNumber, asset: a });
+    }
+    return out;
+  }, [manifest]);
 
-  const assetsFlat: Array<{ pageNumber: number; asset: PageAsset }> = [];
-  for (const p of manifest?.pages ?? []) {
-    for (const a of p.assets ?? []) assetsFlat.push({ pageNumber: p.pageNumber, asset: a });
-  }
+  const taggedAssetsCount = useMemo(() => {
+    let n = 0;
+    for (const p of manifest?.pages ?? []) {
+      for (const a of p.assets ?? []) {
+        if (Array.isArray(a.tags) && a.tags.length > 0) n += 1;
+      }
+    }
+    return n;
+  }, [manifest]);
+
+  const assetCard = (pageNumber: number, asset: PageAsset) => {
+    const tags = Array.isArray(asset.tags) ? asset.tags : [];
+    const delKey = `${pageNumber}-${asset.assetId}`;
+    const delBusy = !!deletingAssets[delKey] || !!busy;
+
+    return (
+      <div
+        key={`${pageNumber}-${asset.assetId}`}
+        style={{
+          border: "1px solid rgba(0,0,0,0.25)",
+          borderRadius: 12,
+          overflow: "hidden",
+          background: "#fff",
+          position: "relative"
+        }}
+      >
+        <button
+          type="button"
+          aria-label="Delete asset"
+          disabled={delBusy}
+          onClick={() => void deleteAsset(pageNumber, asset.assetId)}
+          style={{
+            position: "absolute",
+            top: 8,
+            right: 8,
+            width: 28,
+            height: 28,
+            borderRadius: 10,
+            border: "1px solid #000",
+            background: "#fff",
+            display: "grid",
+            placeItems: "center",
+            opacity: delBusy ? 0.4 : 1,
+            cursor: delBusy ? "not-allowed" : "pointer",
+            zIndex: 2
+          }}
+        >
+          <XIcon />
+        </button>
+
+        <div style={{ aspectRatio: "1 / 1", background: "rgba(0,0,0,0.03)" }}>
+          <img
+            src={bust(asset.url)}
+            alt=""
+            onError={(e) => {
+              e.currentTarget.style.display = "none";
+            }}
+            style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }}
+          />
+        </div>
+
+        <div style={{ padding: 10 }}>
+          <div style={{ fontSize: 12, fontWeight: 800 }}>
+            p{pageNumber} · {asset.assetId}
+          </div>
+
+          {tags.length > 0 && (
+            <div style={{ marginTop: 8, display: "flex", flexWrap: "wrap", gap: 6 }}>
+              {tags.slice(0, 20).map((t) => (
+                <span
+                  key={t}
+                  style={{
+                    border: "1px solid rgba(0,0,0,0.25)",
+                    borderRadius: 999,
+                    padding: "3px 8px",
+                    fontSize: 12
+                  }}
+                >
+                  {t}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div style={{ minHeight: "100vh", padding: 28 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "flex-start" }}>
         <div>
           <div style={{ fontSize: 22, fontWeight: 800, letterSpacing: -0.3 }}>OTHERLY — Ingest 1.0</div>
         </div>
 
-        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
           <button
             type="button"
             disabled={!!busy}
@@ -821,94 +870,18 @@ async function splitImages() {
 
           <button
             type="button"
-            disabled={!manifest?.docAiJson?.url || !manifest?.pages?.length || !!busy}
-            onClick={() => void tagImages()}
+            disabled={!manifestUrl || !projectId || !!busy}
+            onClick={() => void rebuildAssets()}
             style={{
               border: "1px solid #000",
-              background: manifest?.docAiJson?.url && manifest?.pages?.length && !busy ? "#000" : "#fff",
-              color: manifest?.docAiJson?.url && manifest?.pages?.length && !busy ? "#fff" : "#000",
+              background: "#fff",
               padding: "10px 12px",
               borderRadius: 12,
-              opacity: manifest?.docAiJson?.url && manifest?.pages?.length && !busy ? 1 : 0.4
+              opacity: !manifestUrl || !projectId || busy ? 0.4 : 1
             }}
           >
-            Tag images
+            Rebuild assets
           </button>
-         <button
-  type="button"
-  disabled={!manifestUrl || !projectId || !!busy}
-  onClick={async () => {
-    setLastError("");
-    if (!projectId || !manifestUrl) return;
-
-    setBusy("Pruning missing assets...");
-    try {
-      const r = await fetch("/api/projects/assets/prune-missing", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectId, manifestUrl })
-      });
-      const j = (await r.json()) as { ok: boolean; manifestUrl?: string; error?: string };
-      if (!r.ok || !j.ok || !j.manifestUrl) throw new Error(j.error || "Prune failed");
-
-      setManifestUrl(j.manifestUrl);
-      setUrlParams(projectId, j.manifestUrl);
-      await loadManifest(j.manifestUrl);
-      await refreshProjects();
-    } catch (e) {
-      setLastError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy("");
-    }
-  }}
-  style={{
-    border: "1px solid #000",
-    background: "#fff",
-    padding: "10px 12px",
-    borderRadius: 12,
-    opacity: !manifestUrl || !projectId || busy ? 0.4 : 1
-  }}
->
-  Prune assets
-</button>
-          <button
-  type="button"
-  disabled={!manifestUrl || !projectId || !!busy}
-  onClick={async () => {
-    setLastError("");
-    if (!projectId || !manifestUrl) return;
-
-    setBusy("Rebuilding assets...");
-    try {
-      const r = await fetch("/api/projects/assets/rebuild-index", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectId, manifestUrl })
-      });
-
-      const j = (await r.json()) as { ok: boolean; manifestUrl?: string; error?: string };
-      if (!r.ok || !j.ok || !j.manifestUrl) throw new Error(j.error || `Rebuild failed (${r.status})`);
-
-      setManifestUrl(j.manifestUrl);
-      setUrlParams(projectId, j.manifestUrl);
-      await loadManifest(j.manifestUrl);
-      await refreshProjects();
-    } catch (e) {
-      setLastError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy("");
-    }
-  }}
-  style={{
-    border: "1px solid #000",
-    background: "#fff",
-    padding: "10px 12px",
-    borderRadius: 12,
-    opacity: !manifestUrl || !projectId || busy ? 0.4 : 1
-  }}
->
-  Rebuild assets
-</button>
         </div>
       </div>
 
@@ -943,105 +916,6 @@ async function splitImages() {
 
       <div style={{ marginTop: 18, border: "1px solid #000", borderRadius: 12 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: 14 }}>
-          <div style={{ fontWeight: 800 }}>Assets</div>
-          <button
-            type="button"
-            aria-label={assetsOpen ? "Collapse assets" : "Expand assets"}
-            onClick={() => setAssetsOpen((v) => !v)}
-            style={{
-              border: "1px solid #000",
-              background: "#fff",
-              width: 36,
-              height: 30,
-              borderRadius: 10,
-              display: "grid",
-              placeItems: "center"
-            }}
-          >
-            <Chevron up={assetsOpen} />
-          </button>
-        </div>
-{assetsOpen && (
-  <div style={{ padding: "0 14px 14px 14px" }}>
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 10 }}>
-      {assetsFlat.map(({ pageNumber, asset }) => {
-        const tags = Array.isArray(asset.tags) ? asset.tags : [];
-        return (
-          <div
-            key={`${pageNumber}-${asset.assetId}`}
-            style={{
-              position: "relative",
-              border: "1px solid rgba(0,0,0,0.25)",
-              borderRadius: 12,
-              overflow: "hidden",
-              background: "#fff"
-            }}
-          >
-            <button
-              type="button"
-              aria-label={`Delete ${asset.assetId}`}
-              disabled={!!busy || !!deletingAssets[`${pageNumber}-${asset.assetId}`]}
-              onClick={() => void deleteAsset(pageNumber, asset.assetId, asset.url)}
-              style={{
-                position: "absolute",
-                top: 8,
-                right: 8,
-                border: "1px solid rgba(0,0,0,0.35)",
-                background: "#fff",
-                width: 28,
-                height: 24,
-                borderRadius: 10,
-                display: "grid",
-                placeItems: "center",
-                opacity: busy ? 0.5 : 1,
-                cursor: busy ? "not-allowed" : "pointer",
-                zIndex: 2
-              }}
-            >
-              <XIcon />
-            </button>
-
-            <div style={{ aspectRatio: "1 / 1", background: "rgba(0,0,0,0.03)" }}>
-              <img
-                src={bust(asset.url)}
-                alt=""
-                style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }}
-              />
-            </div>
-
-            <div style={{ padding: 10 }}>
-              <div style={{ fontSize: 12, fontWeight: 800 }}>
-                p{pageNumber} · {asset.assetId}
-              </div>
-
-              {tags.length > 0 && (
-                <div style={{ marginTop: 8, display: "flex", flexWrap: "wrap", gap: 6 }}>
-                  {tags.map((t) => (
-                    <span
-                      key={t}
-                      style={{
-                        fontSize: 12,
-                        padding: "4px 8px",
-                        border: "1px solid rgba(0,0,0,0.25)",
-                        borderRadius: 999
-                      }}
-                    >
-                      {t}
-                    </span>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  </div>
-)}
-      </div>
-
-      <div style={{ marginTop: 18, border: "1px solid #000", borderRadius: 12 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: 14 }}>
           <div style={{ fontWeight: 800 }}>Settings</div>
           <button
             type="button"
@@ -1062,9 +936,11 @@ async function splitImages() {
         </div>
 
         {settingsOpen && (
-          <div style={{ padding: "0 14px 14px 14px", overflow: "hidden" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-              <Tabs value={settingsTab} onChange={setSettingsTab} />
+          <div style={{ padding: "0 14px 14px 14px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <Tabs value={settingsTab} onChange={setSettingsTab} />
+              </div>
 
               <button
                 type="button"
@@ -1101,9 +977,6 @@ async function splitImages() {
                   onChange={(e) => setAiRulesDraft(e.target.value)}
                   style={{
                     width: "100%",
-                    maxWidth: "100%",
-                    boxSizing: "border-box",
-                    display: "block",
                     minHeight: 180,
                     border: "1px solid rgba(0,0,0,0.35)",
                     borderRadius: 12,
@@ -1118,9 +991,6 @@ async function splitImages() {
                   onChange={(e) => setTaggingJsonDraft(e.target.value)}
                   style={{
                     width: "100%",
-                    maxWidth: "100%",
-                    boxSizing: "border-box",
-                    display: "block",
                     minHeight: 180,
                     border: "1px solid rgba(0,0,0,0.35)",
                     borderRadius: 12,
@@ -1180,65 +1050,108 @@ async function splitImages() {
 
         {projectsOpen && (
           <div style={{ padding: "0 14px 14px 14px" }}>
-            <div style={{ display: "grid", gap: 8 }}>
-              {projects.map((p) => {
-                const active = p.projectId === projectId;
-                return (
-                  <div
-                    key={p.projectId}
-                    style={{
-                      border: "1px solid rgba(0,0,0,0.25)",
-                      borderRadius: 12,
-                      padding: 10,
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "center",
-                      gap: 10,
-                      background: active ? "rgba(0,0,0,0.04)" : "#fff"
-                    }}
-                  >
-                    <button
-                      type="button"
-                      onClick={() => void openProject(p)}
+            {projects.length === 0 ? (
+              <div style={{ fontSize: 13, opacity: 0.7 }}>No projects found.</div>
+            ) : (
+              <div style={{ display: "grid", gap: 8 }}>
+                {projects.map((p) => {
+                  const active = p.projectId === projectId;
+                  return (
+                    <div
+                      key={p.projectId}
                       style={{
-                        textAlign: "left",
-                        flex: 1,
-                        border: "none",
-                        background: "transparent",
-                        padding: 0,
-                        cursor: "pointer"
+                        border: "1px solid rgba(0,0,0,0.25)",
+                        borderRadius: 12,
+                        padding: 10,
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        gap: 10,
+                        background: active ? "rgba(0,0,0,0.04)" : "#fff"
                       }}
                     >
-                      <div style={{ fontWeight: 800, fontSize: 13, lineHeight: "18px" }}>
-                        {p.filename || "(no source)"}
-                      </div>
-                      <div style={{ fontSize: 12, opacity: 0.75, marginTop: 4 }}>
-                        id: {p.projectId} · {p.status} · pages: {p.pagesCount} · text: {p.hasText ? "yes" : "no"}
-                      </div>
-                    </button>
+                      <button
+                        type="button"
+                        onClick={() => void openProject(p)}
+                        style={{
+                          textAlign: "left",
+                          flex: 1,
+                          border: "none",
+                          background: "transparent",
+                          padding: 0,
+                          cursor: "pointer"
+                        }}
+                      >
+                        <div style={{ fontWeight: 800, fontSize: 13, lineHeight: "18px" }}>
+                          {p.filename || "(no source)"}
+                        </div>
+                        <div style={{ fontSize: 12, opacity: 0.75, marginTop: 4 }}>
+                          id: {p.projectId} · {p.status} · pages: {p.pagesCount} · text: {p.hasText ? "yes" : "no"}
+                        </div>
+                      </button>
 
-                    <button
-                      type="button"
-                      aria-label={`Delete project ${p.projectId}`}
-                      disabled={projectsBusy}
-                      onClick={() => void deleteProject(p.projectId)}
-                      style={{
-                        border: "1px solid #000",
-                        background: "#fff",
-                        width: 36,
-                        height: 30,
-                        borderRadius: 10,
-                        display: "grid",
-                        placeItems: "center",
-                        opacity: projectsBusy ? 0.5 : 1
-                      }}
-                    >
-                      <Trash />
-                    </button>
-                  </div>
-                );
-              })}
+                      <button
+                        type="button"
+                        aria-label={`Delete project ${p.projectId}`}
+                        disabled={projectsBusy}
+                        onClick={() => void deleteProject(p.projectId)}
+                        style={{
+                          border: "1px solid #000",
+                          background: "#fff",
+                          width: 36,
+                          height: 30,
+                          borderRadius: 10,
+                          display: "grid",
+                          placeItems: "center",
+                          opacity: projectsBusy ? 0.5 : 1
+                        }}
+                      >
+                        <Trash />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      <div style={{ marginTop: 18, border: "1px solid #000", borderRadius: 12 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: 14 }}>
+          <div style={{ fontWeight: 800 }}>Assets</div>
+
+          <button
+            type="button"
+            aria-label={assetsOpen ? "Collapse assets" : "Expand assets"}
+            onClick={() => setAssetsOpen((v) => !v)}
+            style={{
+              border: "1px solid #000",
+              background: "#fff",
+              width: 36,
+              height: 30,
+              borderRadius: 10,
+              display: "grid",
+              placeItems: "center"
+            }}
+          >
+            <Chevron up={assetsOpen} />
+          </button>
+        </div>
+
+        {assetsOpen && (
+          <div style={{ padding: "0 14px 14px 14px" }}>
+            <div style={{ fontSize: 13, opacity: 0.75, marginBottom: 10 }}>
+              {taggedAssetsCount}/{totalAssetsCount}
             </div>
+
+            {assetsFlat.length === 0 ? (
+              <div style={{ fontSize: 13, opacity: 0.7 }}>—</div>
+            ) : (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 10 }}>
+                {assetsFlat.map(({ pageNumber, asset }) => assetCard(pageNumber, asset))}
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -1300,7 +1213,7 @@ async function splitImages() {
             </div>
 
             <div style={{ marginTop: 6 }}>
-              <span style={{ opacity: 0.7 }}>assets:</span> {taggedAssetsCount}/{totalAssetsCount}
+              <span style={{ opacity: 0.7 }}>assets:</span> {totalAssetsCount}
             </div>
           </div>
         )}
