@@ -37,8 +37,7 @@ async function fetchManifest(manifestUrlRaw: string): Promise<ProjectManifest> {
 }
 
 function parseAssetPath(pathname: string) {
-  // projects/{pid}/assets/p{N}/p{N}-imgXX*.png
-  // assetId should be the stable part: p{N}-imgXX
+  // projects/{pid}/assets/p{N}/p{N}-imgXX*.png  -> assetId = p{N}-imgXX
   const m = pathname.match(/^projects\/[^/]+\/assets\/p(\d+)\/(p\d+-img\d+)/);
   if (!m) return null;
   const pageNumber = Number(m[1]);
@@ -72,7 +71,7 @@ export async function POST(req: Request): Promise<Response> {
 
     const prefix = `projects/${projectId}/assets/`;
 
-    // Collect newest URL per (pageNumber, assetId)
+    // Build authoritative map from Blob: (pageNumber::assetId) -> url
     const found = new Map<string, { pageNumber: number; assetId: string; url: string }>();
 
     let cursor: string | undefined = undefined;
@@ -89,13 +88,10 @@ export async function POST(req: Request): Promise<Response> {
 
         const key = `${parsed.pageNumber}::${parsed.assetId}`;
 
-        // If multiple URLs exist for same assetId, pick a stable winner.
-        // (We can’t trust lexicographic order for “newest”, but this is OK because
-        // we are using Blob listing as the source of truth and we only need one valid URL.)
+        // choose a deterministic winner if duplicates exist
         const prev = found.get(key);
         if (!prev) found.set(key, { pageNumber: parsed.pageNumber, assetId: parsed.assetId, url });
         else {
-          // Prefer longer URLs (often includes suffix) then lexicographic as tie-breaker
           const pick =
             url.length > prev.url.length ? url : url.length < prev.url.length ? prev.url : url > prev.url ? url : prev.url;
           found.set(key, { pageNumber: parsed.pageNumber, assetId: parsed.assetId, url: pick });
@@ -107,7 +103,7 @@ export async function POST(req: Request): Promise<Response> {
       if (!cursor) break;
     }
 
-    // Build per-page authoritative asset lists from Blob results
+    // pageNumber -> [{assetId,url}]
     const foundByPage = new Map<number, Array<{ assetId: string; url: string }>>();
     for (const item of found.values()) {
       const arr = foundByPage.get(item.pageNumber) ?? [];
@@ -115,13 +111,24 @@ export async function POST(req: Request): Promise<Response> {
       foundByPage.set(item.pageNumber, arr);
     }
 
-    // Replace assets per page (authoritative), but keep existing tags when assetId matches
+    // Ensure manifest has page entries for any pages that exist in Blob
+    const existingPages = new Set<number>(manifest.pages.map((p) => p.pageNumber));
+    for (const pageNumber of foundByPage.keys()) {
+      if (!existingPages.has(pageNumber)) {
+        manifest.pages.push({ pageNumber, url: "", width: 0, height: 0, assets: [] });
+      }
+    }
+
+    // Keep pages sorted
+    manifest.pages.sort((a, b) => a.pageNumber - b.pageNumber);
+
+    // Replace assets for EVERY page (authoritative). If Blob has none -> assets becomes []
     let pagesTouched = 0;
+    let removedStale = 0;
     let totalAssetsAfter = 0;
 
     for (const p of manifest.pages) {
       const blobAssets = foundByPage.get(p.pageNumber) ?? [];
-      if (blobAssets.length === 0) continue;
 
       const existing = Array.isArray(p.assets) ? p.assets : [];
       const existingById = new Map<string, PageAsset>();
@@ -136,6 +143,9 @@ export async function POST(req: Request): Promise<Response> {
         })
         .sort((a, b) => a.assetId.localeCompare(b.assetId));
 
+      // count stale removals (manifest had more than blob)
+      if (existing.length > nextAssets.length) removedStale += existing.length - nextAssets.length;
+
       p.assets = nextAssets;
       pagesTouched += 1;
       totalAssetsAfter += nextAssets.length;
@@ -148,6 +158,7 @@ export async function POST(req: Request): Promise<Response> {
       manifestUrl: newManifestUrl,
       foundKeys: found.size,
       pagesTouched,
+      removedStale,
       totalAssetsAfter
     });
   } catch (e) {
