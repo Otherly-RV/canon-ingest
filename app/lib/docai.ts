@@ -52,11 +52,11 @@ function sliceTextAnchors(
 
 export async function processWithDocAI(pdfBytes: Buffer): Promise<DocAIExtract> {
   const projectId = process.env.GCP_PROJECT_ID;
-  const location = process.env.GCP_LOCATION;
-  const processorId = process.env.GCP_PROCESSOR_ID;
+  const location = process.env.DOCAI_LOCATION;
+  const processorId = process.env.DOCAI_PROCESSOR_ID;
 
   if (!projectId || !location || !processorId) {
-    throw new Error("Missing GCP_PROJECT_ID / GCP_LOCATION / GCP_PROCESSOR_ID");
+    throw new Error("Missing GCP_PROJECT_ID / DOCAI_LOCATION / DOCAI_PROCESSOR_ID");
   }
 
   const sa = getServiceAccountJson();
