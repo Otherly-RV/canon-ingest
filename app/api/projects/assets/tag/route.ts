@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 type Body = {
   projectId?: string;
   manifestUrl?: string;
-  limitAssets?: number; // optional safety
+  limitAssets?: number; // optional
 };
 
 function baseUrl(u: string) {
@@ -48,7 +48,10 @@ function getEnv(name: string): string {
   return v;
 }
 
-function sliceTextByAnchor(fullText: string, anchor?: { textSegments?: Array<{ startIndex?: number; endIndex?: number }> }) {
+function sliceTextByAnchor(
+  fullText: string,
+  anchor?: { textSegments?: Array<{ startIndex?: number; endIndex?: number }> }
+) {
   const segs = anchor?.textSegments;
   if (!fullText || !Array.isArray(segs) || segs.length === 0) return "";
 
@@ -86,10 +89,10 @@ async function callOpenAiTagger(args: {
   const apiKey = getEnv("OPENAI_API_KEY");
   const model = process.env.OPENAI_MODEL || "gpt-4.1-mini";
 
-  const system = `You are an internal tagging engine.
+  const system = `You are an internal image tagging engine.
 Return ONLY valid JSON. No markdown. No extra keys.`;
 
-  const user = {
+  const userObj = {
     aiRules: args.aiRules,
     taggingJson: args.taggingJson,
     context: {
@@ -98,10 +101,10 @@ Return ONLY valid JSON. No markdown. No extra keys.`;
       imageUrl: args.imageUrl,
       pageText: args.pageText
     },
-    task: "Generate concise, consistent tags for this image asset based on the pageText and the taggingJson. Keep tags stable and reusable."
+    task:
+      "Generate concise, reusable tags for this image asset. Tags must be coherent with pageText. Prefer stable nouns/adjectives. Avoid duplicates."
   };
 
-  // Strict JSON response contract
   const schema = {
     name: "asset_tags",
     schema: {
@@ -125,7 +128,7 @@ Return ONLY valid JSON. No markdown. No extra keys.`;
       model,
       input: [
         { role: "system", content: [{ type: "text", text: system }] },
-        { role: "user", content: [{ type: "text", text: JSON.stringify(user) }] }
+        { role: "user", content: [{ type: "text", text: JSON.stringify(userObj) }] }
       ],
       response_format: { type: "json_schema", json_schema: schema }
     })
@@ -137,18 +140,16 @@ Return ONLY valid JSON. No markdown. No extra keys.`;
   }
 
   const data = (await resp.json()) as unknown;
-
-  // Responses API: easiest robust extraction is to find output_text
-  const outputText =
+  const outText =
     typeof (data as { output_text?: unknown }).output_text === "string"
       ? ((data as { output_text: string }).output_text as string)
       : "";
 
-  if (!outputText) throw new Error("OpenAI returned no output_text");
+  if (!outText) throw new Error("OpenAI returned no output_text");
 
   let parsed: TaggingResult;
   try {
-    parsed = JSON.parse(outputText) as TaggingResult;
+    parsed = JSON.parse(outText) as TaggingResult;
   } catch {
     throw new Error("OpenAI returned non-JSON output");
   }
@@ -157,7 +158,6 @@ Return ONLY valid JSON. No markdown. No extra keys.`;
     throw new Error("Invalid tagger JSON shape");
   }
 
-  // normalize tags
   const tags = Array.from(
     new Set(
       parsed.tags
@@ -192,11 +192,11 @@ export async function POST(req: Request): Promise<Response> {
   }
 
   if (!manifest.docAiJson?.url) {
-    return NextResponse.json({ ok: false, error: "Missing docAiJson.url (run Process Text first)" }, { status: 400 });
+    return NextResponse.json({ ok: false, error: "Missing docAiJson.url" }, { status: 400 });
   }
 
   if (!Array.isArray(manifest.pages) || manifest.pages.length === 0) {
-    return NextResponse.json({ ok: false, error: "No pages found (run Rasterize + Split first)" }, { status: 400 });
+    return NextResponse.json({ ok: false, error: "No pages found" }, { status: 400 });
   }
 
   const raw = await fetchJson<DocAiRaw>(manifest.docAiJson.url);
@@ -216,7 +216,6 @@ export async function POST(req: Request): Promise<Response> {
       scanned += 1;
       if (limitAssets > 0 && scanned > limitAssets) break;
 
-      // skip if already tagged
       if (Array.isArray(asset.tags) && asset.tags.length > 0) continue;
 
       const result = await callOpenAiTagger({
@@ -229,8 +228,7 @@ export async function POST(req: Request): Promise<Response> {
       });
 
       asset.tags = result.tags;
-      // optional: store rationale without changing UI yet
-      (asset as unknown as { tagRationale?: string }).tagRationale = result.rationale;
+      asset.tagRationale = result.rationale;
 
       tagged += 1;
     }
@@ -240,10 +238,5 @@ export async function POST(req: Request): Promise<Response> {
 
   const newManifestUrl = await saveManifest(manifest);
 
-  return NextResponse.json({
-    ok: true,
-    manifestUrl: newManifestUrl,
-    tagged,
-    scanned
-  });
+  return NextResponse.json({ ok: true, manifestUrl: newManifestUrl, tagged, scanned });
 }
