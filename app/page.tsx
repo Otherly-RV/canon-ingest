@@ -782,6 +782,40 @@ async function deleteAsset(pageNumber: number, assetId: string, assetUrl: string
           >
             Tag images
           </button>
+          <button
+  type="button"
+  disabled={!manifestUrl || !projectId || !!busy}
+  onClick={async () => {
+    setLastError("");
+    setBusy("Pruning missing assets...");
+    try {
+      const r = await fetch("/api/projects/assets/prune-missing", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId, manifestUrl })
+      });
+      if (!r.ok) throw new Error(await readErrorText(r));
+      const j = (await r.json()) as { ok: boolean; manifestUrl?: string; error?: string };
+      if (!j.ok || !j.manifestUrl) throw new Error(j.error || "Prune failed");
+      setManifestUrl(j.manifestUrl);
+      setUrlParams(projectId, j.manifestUrl);
+      await loadManifest(j.manifestUrl);
+    } catch (e) {
+      setLastError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy("");
+    }
+  }}
+  style={{
+    border: "1px solid #000",
+    background: "#fff",
+    padding: "10px 12px",
+    borderRadius: 12,
+    opacity: !manifestUrl || !projectId || busy ? 0.4 : 1
+  }}
+>
+  Prune missing assets
+</button>
         </div>
       </div>
 
