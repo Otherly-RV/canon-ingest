@@ -25,7 +25,7 @@ type Manifest = {
     url: string;
     width: number;
     height: number;
-    tags?: string[]; // legacy, not shown
+    tags?: string[]; // legacy, not used
     assets?: PageAsset[];
   }>;
   settings: {
@@ -201,6 +201,8 @@ export default function Page() {
   const [aiRulesDraft, setAiRulesDraft] = useState<string>("");
   const [taggingJsonDraft, setTaggingJsonDraft] = useState<string>("");
 
+  const [assetsOpen, setAssetsOpen] = useState(true);
+
   const [rasterProgress, setRasterProgress] = useState({
     running: false,
     currentPage: 0,
@@ -238,6 +240,18 @@ export default function Page() {
     } finally {
       setProjectsBusy(false);
     }
+  }
+
+  async function restoreProjectState(pid: string, murl: string): Promise<string> {
+    const r = await fetch("/api/projects/restore", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ projectId: pid, manifestUrl: murl })
+    });
+    if (!r.ok) throw new Error(await readErrorText(r));
+    const j = (await r.json()) as { ok: boolean; manifestUrl?: string; error?: string };
+    if (!j.ok || !j.manifestUrl) throw new Error(j.error || "Restore failed (bad response)");
+    return j.manifestUrl;
   }
 
   useEffect(() => {
@@ -407,105 +421,6 @@ export default function Page() {
     }
   }
 
-  async function deleteProject(targetProjectId: string) {
-    const ok = window.confirm(`Delete project ${targetProjectId}?`);
-    if (!ok) return;
-
-    setLastError("");
-    setProjectsBusy(true);
-
-    try {
-      const r = await fetch("/api/projects/delete", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectId: targetProjectId })
-      });
-
-      if (!r.ok) throw new Error(await readErrorText(r));
-
-      if (targetProjectId === projectId) {
-        setProjectId("");
-        setManifestUrl("");
-        setManifest(null);
-        setAiRulesDraft("");
-        setTaggingJsonDraft("");
-        clearUrlParams();
-      }
-
-      await refreshProjects();
-    } catch (e) {
-      setLastError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setProjectsBusy(false);
-    }
-  }
-
-  async function openProject(p: ProjectRow) {
-    setLastError("");
-    setProjectId(p.projectId);
-    setManifestUrl(p.manifestUrl);
-    setUrlParams(p.projectId, p.manifestUrl);
-
-    try {
-      await loadManifest(p.manifestUrl);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      setLastError(msg);
-
-      const lower = msg.toLowerCase();
-      const looksLike404 = msg.includes("404") || lower.includes("not found");
-
-      if (looksLike404) {
-        await refreshProjects();
-        setProjectId("");
-        setManifestUrl("");
-        setManifest(null);
-        setAiRulesDraft("");
-        setTaggingJsonDraft("");
-        clearUrlParams();
-      }
-    }
-  }
-
-  async function saveSettings() {
-    setSettingsError("");
-    if (!projectId || !manifestUrl) {
-      setSettingsError("No active project.");
-      return;
-    }
-
-    try {
-      JSON.parse(taggingJsonDraft);
-    } catch {
-      setSettingsError("Invalid JSON.");
-      return;
-    }
-
-    setSettingsBusy(true);
-    try {
-      const r = await fetch("/api/projects/settings/save", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectId, manifestUrl, aiRules: aiRulesDraft, taggingJson: taggingJsonDraft })
-      });
-
-      if (!r.ok) throw new Error(await readErrorText(r));
-
-      const j = (await r.json()) as { ok: boolean; manifestUrl?: string; error?: string };
-      if (!j.ok || !j.manifestUrl) throw new Error(j.error || "Save failed (bad response)");
-
-      setManifestUrl(j.manifestUrl);
-      setUrlParams(projectId, j.manifestUrl);
-      await loadManifest(j.manifestUrl);
-
-      await refreshProjects();
-    } catch (e) {
-      setSettingsError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setSettingsBusy(false);
-    }
-  }
-
   async function recordAsset(pageNumber: number, assetId: string, url: string, bbox: AssetBBox) {
     const r = await fetch("/api/projects/assets/record", {
       method: "POST",
@@ -552,9 +467,7 @@ export default function Page() {
       if (!detected.ok || !Array.isArray(detected.pages)) throw new Error(detected.error || "Detect failed (bad response)");
 
       const byPage = new Map<number, AssetBBox[]>();
-      for (const p of detected.pages) {
-        byPage.set(p.pageNumber, Array.isArray(p.boxes) ? p.boxes : []);
-      }
+      for (const p of detected.pages) byPage.set(p.pageNumber, Array.isArray(p.boxes) ? p.boxes : []);
 
       const pages = manifest.pages;
 
@@ -645,6 +558,98 @@ export default function Page() {
     }
   }
 
+  async function deleteProject(targetProjectId: string) {
+    const ok = window.confirm(`Delete project ${targetProjectId}?`);
+    if (!ok) return;
+
+    setLastError("");
+    setProjectsBusy(true);
+
+    try {
+      const r = await fetch("/api/projects/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId: targetProjectId })
+      });
+
+      if (!r.ok) throw new Error(await readErrorText(r));
+
+      if (targetProjectId === projectId) {
+        setProjectId("");
+        setManifestUrl("");
+        setManifest(null);
+        setAiRulesDraft("");
+        setTaggingJsonDraft("");
+        clearUrlParams();
+      }
+
+      await refreshProjects();
+    } catch (e) {
+      setLastError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setProjectsBusy(false);
+    }
+  }
+
+  async function openProject(p: ProjectRow) {
+    setLastError("");
+    setProjectId(p.projectId);
+    setManifestUrl(p.manifestUrl);
+    setUrlParams(p.projectId, p.manifestUrl);
+
+    try {
+      // Restore previous state automatically (pages/assets from Blob)
+      const restoredManifestUrl = await restoreProjectState(p.projectId, p.manifestUrl);
+
+      setManifestUrl(restoredManifestUrl);
+      setUrlParams(p.projectId, restoredManifestUrl);
+
+      await loadManifest(restoredManifestUrl);
+      await refreshProjects();
+    } catch (e) {
+      setLastError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  async function saveSettings() {
+    setSettingsError("");
+    if (!projectId || !manifestUrl) {
+      setSettingsError("No active project.");
+      return;
+    }
+
+    try {
+      JSON.parse(taggingJsonDraft);
+    } catch {
+      setSettingsError("Invalid JSON.");
+      return;
+    }
+
+    setSettingsBusy(true);
+    try {
+      const r = await fetch("/api/projects/settings/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId, manifestUrl, aiRules: aiRulesDraft, taggingJson: taggingJsonDraft })
+      });
+
+      if (!r.ok) throw new Error(await readErrorText(r));
+
+      const j = (await r.json()) as { ok: boolean; manifestUrl?: string; error?: string };
+      if (!j.ok || !j.manifestUrl) throw new Error(j.error || "Save failed (bad response)");
+
+      setManifestUrl(j.manifestUrl);
+      setUrlParams(projectId, j.manifestUrl);
+      await loadManifest(j.manifestUrl);
+
+      await refreshProjects();
+    } catch (e) {
+      setSettingsError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSettingsBusy(false);
+    }
+  }
+
   const pagesCount = manifest?.pages?.length ?? 0;
 
   const totalAssetsCount =
@@ -655,6 +660,11 @@ export default function Page() {
       (acc, p) => acc + ((p.assets ?? []).filter((a) => (a.tags ?? []).length > 0).length),
       0
     ) ?? 0;
+
+  const assetsFlat: Array<{ pageNumber: number; asset: PageAsset }> = [];
+  for (const p of manifest?.pages ?? []) {
+    for (const a of p.assets ?? []) assetsFlat.push({ pageNumber: p.pageNumber, asset: a });
+  }
 
   return (
     <div style={{ minHeight: "100vh", padding: 28 }}>
@@ -767,6 +777,81 @@ export default function Page() {
       )}
 
       <div style={{ marginTop: 18, borderTop: "1px solid rgba(0,0,0,0.2)" }} />
+
+      <div style={{ marginTop: 18, border: "1px solid #000", borderRadius: 12 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: 14 }}>
+          <div style={{ fontWeight: 800 }}>Assets</div>
+          <button
+            type="button"
+            aria-label={assetsOpen ? "Collapse assets" : "Expand assets"}
+            onClick={() => setAssetsOpen((v) => !v)}
+            style={{
+              border: "1px solid #000",
+              background: "#fff",
+              width: 36,
+              height: 30,
+              borderRadius: 10,
+              display: "grid",
+              placeItems: "center"
+            }}
+          >
+            <Chevron up={assetsOpen} />
+          </button>
+        </div>
+
+        {assetsOpen && (
+          <div style={{ padding: "0 14px 14px 14px" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 10 }}>
+              {assetsFlat.map(({ pageNumber, asset }) => {
+                const tags = Array.isArray(asset.tags) ? asset.tags : [];
+                return (
+                  <div
+                    key={`${pageNumber}-${asset.assetId}`}
+                    style={{
+                      border: "1px solid rgba(0,0,0,0.25)",
+                      borderRadius: 12,
+                      overflow: "hidden",
+                      background: "#fff"
+                    }}
+                  >
+                    <div style={{ aspectRatio: "1 / 1", background: "rgba(0,0,0,0.03)" }}>
+                      <img
+                        src={bust(asset.url)}
+                        alt=""
+                        style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }}
+                      />
+                    </div>
+
+                    <div style={{ padding: 10 }}>
+                      <div style={{ fontSize: 12, fontWeight: 800 }}>
+                        p{pageNumber} · {asset.assetId}
+                      </div>
+
+                      {tags.length > 0 && (
+                        <div style={{ marginTop: 8, display: "flex", flexWrap: "wrap", gap: 6 }}>
+                          {tags.slice(0, 16).map((t) => (
+                            <span
+                              key={t}
+                              style={{
+                                border: "1px solid rgba(0,0,0,0.25)",
+                                borderRadius: 999,
+                                padding: "3px 8px",
+                                fontSize: 12
+                              }}
+                            >
+                              {t}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
 
       <div style={{ marginTop: 18, border: "1px solid #000", borderRadius: 12 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: 14 }}>
@@ -908,69 +993,65 @@ export default function Page() {
 
         {projectsOpen && (
           <div style={{ padding: "0 14px 14px 14px" }}>
-            {projects.length === 0 ? (
-              <div style={{ fontSize: 13, opacity: 0.7 }}>No projects found.</div>
-            ) : (
-              <div style={{ display: "grid", gap: 8 }}>
-                {projects.map((p) => {
-                  const active = p.projectId === projectId;
-                  return (
-                    <div
-                      key={p.projectId}
+            <div style={{ display: "grid", gap: 8 }}>
+              {projects.map((p) => {
+                const active = p.projectId === projectId;
+                return (
+                  <div
+                    key={p.projectId}
+                    style={{
+                      border: "1px solid rgba(0,0,0,0.25)",
+                      borderRadius: 12,
+                      padding: 10,
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      gap: 10,
+                      background: active ? "rgba(0,0,0,0.04)" : "#fff"
+                    }}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => void openProject(p)}
                       style={{
-                        border: "1px solid rgba(0,0,0,0.25)",
-                        borderRadius: 12,
-                        padding: 10,
-                        display: "flex",
-                        justifyContent: "space-between",
-                        alignItems: "center",
-                        gap: 10,
-                        background: active ? "rgba(0,0,0,0.04)" : "#fff"
+                        textAlign: "left",
+                        flex: 1,
+                        border: "none",
+                        background: "transparent",
+                        padding: 0,
+                        cursor: "pointer"
                       }}
                     >
-                      <button
-                        type="button"
-                        onClick={() => void openProject(p)}
-                        style={{
-                          textAlign: "left",
-                          flex: 1,
-                          border: "none",
-                          background: "transparent",
-                          padding: 0,
-                          cursor: "pointer"
-                        }}
-                      >
-                        <div style={{ fontWeight: 800, fontSize: 13, lineHeight: "18px" }}>
-                          {p.filename || "(no source)"}
-                        </div>
-                        <div style={{ fontSize: 12, opacity: 0.75, marginTop: 4 }}>
-                          id: {p.projectId} · {p.status} · pages: {p.pagesCount} · text: {p.hasText ? "yes" : "no"}
-                        </div>
-                      </button>
+                      <div style={{ fontWeight: 800, fontSize: 13, lineHeight: "18px" }}>
+                        {p.filename || "(no source)"}
+                      </div>
+                      <div style={{ fontSize: 12, opacity: 0.75, marginTop: 4 }}>
+                        id: {p.projectId} · {p.status} · pages: {p.pagesCount} · text: {p.hasText ? "yes" : "no"}
+                      </div>
+                    </button>
 
-                      <button
-                        type="button"
-                        aria-label={`Delete project ${p.projectId}`}
-                        disabled={projectsBusy}
-                        onClick={() => void deleteProject(p.projectId)}
-                        style={{
-                          border: "1px solid #000",
-                          background: "#fff",
-                          width: 36,
-                          height: 30,
-                          borderRadius: 10,
-                          display: "grid",
-                          placeItems: "center",
-                          opacity: projectsBusy ? 0.5 : 1
-                        }}
-                      >
-                        <Trash />
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
+                    <button
+                      type="button"
+                      aria-label={`Delete project ${p.projectId}`}
+                      disabled={projectsBusy}
+                      onClick={() => void deleteProject(p.projectId)}
+                      style={{
+                        border: "1px solid #000",
+                        background: "#fff",
+                        width: 36,
+                        height: 30,
+                        borderRadius: 10,
+                        display: "grid",
+                        placeItems: "center",
+                        opacity: projectsBusy ? 0.5 : 1
+                      }}
+                    >
+                      <Trash />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         )}
       </div>
