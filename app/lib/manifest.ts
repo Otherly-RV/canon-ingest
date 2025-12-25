@@ -20,10 +20,12 @@ export type ProjectManifest = {
   sourcePdf?: { url: string; filename: string };
   extractedText?: { url: string };
 
-  // NEW: page PNGs
+  // PNG pages stored in Blob
   pages?: PageImage[];
 
   settings: ProjectSettings;
+
+  // coarse state for UI
   status: "empty" | "uploaded" | "processed";
 };
 
@@ -35,7 +37,12 @@ export function newManifest(projectId: string): ProjectManifest {
     settings: {
       aiRules: `You are the "Otherly Exec". Be strict and coherent. Do not invent details.`,
       uiFieldsJson: JSON.stringify(
-        { fields: [{ key: "title", label: "Title", type: "string" }] },
+        {
+          fields: [
+            { key: "title", label: "Title", type: "string" },
+            { key: "summary", label: "Summary", type: "text" }
+          ]
+        },
         null,
         2
       ),
@@ -43,7 +50,8 @@ export function newManifest(projectId: string): ProjectManifest {
         {
           rules: [
             "Tags must be coherent with the PDF text context.",
-            "Prefer LoRA-friendly tokens, not sentences."
+            "Prefer LoRA-friendly tokens (short, reusable).",
+            "Avoid full sentences. Avoid copyrighted names unless present in the source."
           ],
           max_tags_per_image: 25
         },
