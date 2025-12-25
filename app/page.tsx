@@ -40,7 +40,7 @@ type ProjectRow = {
   createdAt: string;
   status: string;
   filename: string;
-  pagesCount: number;
+  sCount: number;
   hasText: boolean;
 };
 
@@ -52,8 +52,8 @@ type PdfJsLib = {
 type PdfLoadingTask = { promise: Promise<PdfDocument> };
 
 type PdfDocument = {
-  numPages: number;
-  getPage: (pageNumber: number) => Promise<PdfPage>;
+  nums: number;
+  get: (Number: number) => Promise<PdfPage>;
 };
 
 type PdfPage = {
@@ -463,7 +463,40 @@ export default function Page() {
       }
     }
   }
+async function tagImages() {
+  setLastError("");
 
+  if (!projectId || !manifestUrl) return setLastError("Missing projectId/manifestUrl");
+  if (!manifest?.docAiJson?.url) return setLastError("No DocAI JSON");
+  if (!manifest?.pages?.length) return setLastError("No pages/assets");
+
+  if (busy) return;
+
+  setBusy("Tagging...");
+
+  try {
+    const r = await fetch("/api/projects/assets/tag", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ projectId, manifestUrl })
+    });
+
+    if (!r.ok) throw new Error(await readErrorText(r));
+
+    const j = (await r.json()) as { ok: boolean; manifestUrl?: string; error?: string };
+    if (!j.ok || !j.manifestUrl) throw new Error(j.error || "Tagging failed (bad response)");
+
+    setManifestUrl(j.manifestUrl);
+    setUrlParams(projectId, j.manifestUrl);
+
+    await loadManifest(j.manifestUrl);
+    await refreshProjects();
+  } catch (e) {
+    setLastError(e instanceof Error ? e.message : String(e));
+  } finally {
+    setBusy("");
+  }
+}
   async function saveSettings() {
     setSettingsError("");
     if (!projectId || !manifestUrl) {
@@ -616,7 +649,11 @@ export default function Page() {
 
   const taggedPagesCount =
     (manifest?.pages ?? []).filter((p) => Array.isArray(p.tags) && p.tags.length > 0).length ?? 0;
+const taggedAssetsCount =
+  (manifest?.pages ?? []).reduce((acc, p) => acc + ((p.assets ?? []).filter((a) => (a.tags ?? []).length > 0).length), 0) ?? 0;
 
+const totalAssetsCount =
+  (manifest?.pages ?? []).reduce((acc, p) => acc + ((p.assets ?? []).length), 0) ?? 0;
   return (
     <div style={{ minHeight: "100vh", padding: 28 }}>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 16 }}>
@@ -681,6 +718,21 @@ export default function Page() {
           >
             Split images
           </button>
+          <button
+  type="button"
+  disabled={!manifest?.pages?.length || !manifest?.docAiJson?.url || !!busy}
+  onClick={() => void tagImages()}
+  style={{
+    border: "1px solid #000",
+    background: manifest?.pages?.length && manifest?.docAiJson?.url && !busy ? "#000" : "#fff",
+    color: manifest?.pages?.length && manifest?.docAiJson?.url && !busy ? "#fff" : "#000",
+    padding: "10px 12px",
+    borderRadius: 12,
+    opacity: manifest?.pages?.length && manifest?.docAiJson?.url && !busy ? 1 : 0.4
+  }}
+>
+  Tag images
+</button>
         </div>
       </div>
 
@@ -980,6 +1032,9 @@ export default function Page() {
               <span style={{ opacity: 0.7 }}>tagged pages:</span> {taggedPagesCount}/{pagesCount}
             </div>
           </div>
+      <div style={{ marginTop: 6 }}>
+  <span style={{ opacity: 0.7 }}>assets:</span> {taggedAssetsCount}/{totalAssetsCount}
+</div>
         )}
       </div>
 
