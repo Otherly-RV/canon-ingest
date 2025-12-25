@@ -26,6 +26,14 @@ async function fetchManifest(manifestUrlRaw: string): Promise<ProjectManifest> {
   return (await res.json()) as ProjectManifest;
 }
 
+async function fetchPdfAsBuffer(pdfUrlRaw: string): Promise<Buffer> {
+  const url = baseUrl(pdfUrlRaw);
+  const res = await fetch(`${url}?v=${Date.now()}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Cannot fetch PDF (${res.status})`);
+  const ab = await res.arrayBuffer();
+  return Buffer.from(ab);
+}
+
 export async function POST(req: Request): Promise<Response> {
   let body: Body;
   try {
@@ -57,17 +65,20 @@ export async function POST(req: Request): Promise<Response> {
     return NextResponse.json({ ok: false, error: "No source PDF uploaded." }, { status: 400 });
   }
 
-  // 1) Run Document AI (text + raw JSON)
-  const result = await processWithDocAI(sourceUrl);
+  // Fetch PDF bytes from Blob → Buffer
+  const pdfBuffer = await fetchPdfAsBuffer(sourceUrl);
 
-  // 2) Store extracted text in Blob
+  // Run Document AI on bytes
+  const result = await processWithDocAI(pdfBuffer);
+
+  // Store extracted text
   const textBlob = await put(`projects/${projectId}/extracted/text.txt`, result.text, {
     access: "public",
     contentType: "text/plain; charset=utf-8",
     addRandomSuffix: false
   });
 
-  // 3) Store raw DocAI JSON in Blob (for image detection step)
+  // Store raw DocAI JSON
   const rawJsonString = JSON.stringify(result.raw, null, 2);
   const docAiBlob = await put(`projects/${projectId}/docai/result.json`, rawJsonString, {
     access: "public",
@@ -75,7 +86,7 @@ export async function POST(req: Request): Promise<Response> {
     addRandomSuffix: false
   });
 
-  // 4) Update manifest
+  // Update manifest
   manifest.extractedText = { url: textBlob.url };
   manifest.docAiJson = { url: docAiBlob.url };
   manifest.status = "processed";
