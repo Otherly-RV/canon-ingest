@@ -1029,13 +1029,14 @@ const totalAssetsCount =
             </div>
 
             <div style={{ marginTop: 6 }}>
-              <span style={{ opacity: 0.7 }}>tagged pages:</span> {taggedPagesCount}/{pagesCount}
-            </div>
-          </div>
-      <div style={{ marginTop: 6 }}>
+  <span style={{ opacity: 0.7 }}>tagged pages:</span> {taggedPagesCount}/{pagesCount}
+</div>
+
+<div style={{ marginTop: 6 }}>
   <span style={{ opacity: 0.7 }}>assets:</span> {taggedAssetsCount}/{totalAssetsCount}
 </div>
-        )}
+</div>
+)}
       </div>
 
       <input
