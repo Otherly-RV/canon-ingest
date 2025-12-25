@@ -542,6 +542,47 @@ export default function Page() {
           >
             Rasterize PNGs
           </button>
+          <button
+  type="button"
+  disabled={!manifest?.extractedText?.url || !(manifest?.pages?.length && manifest.pages.length > 0) || !!busy}
+  onClick={async () => {
+    setLastError("");
+    if (!projectId || !manifestUrl) return setLastError("Missing projectId/manifestUrl");
+    setBusy("Tagging images...");
+    try {
+      const r = await fetch("/api/projects/tag-images", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId, manifestUrl })
+      });
+      if (!r.ok) throw new Error(await readErrorText(r));
+      const j = (await r.json()) as { ok: boolean; manifestUrl?: string; error?: string };
+      if (!j.ok || !j.manifestUrl) throw new Error(j.error || "Tag images failed (bad response)");
+
+      setManifestUrl(j.manifestUrl);
+      setUrlParams(projectId, j.manifestUrl);
+      await loadManifest(j.manifestUrl);
+      await refreshProjects();
+    } catch (e) {
+      setLastError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy("");
+    }
+  }}
+  style={{
+    border: "1px solid #000",
+    background:
+      manifest?.extractedText?.url && manifest?.pages?.length && !busy ? "#000" : "#fff",
+    color:
+      manifest?.extractedText?.url && manifest?.pages?.length && !busy ? "#fff" : "#000",
+    padding: "10px 12px",
+    borderRadius: 12,
+    opacity:
+      manifest?.extractedText?.url && manifest?.pages?.length && !busy ? 1 : 0.4
+  }}
+>
+  Tag images
+</button>
         </div>
       </div>
 
@@ -625,9 +666,6 @@ export default function Page() {
             <div style={{ marginTop: 12 }}>
               {settingsTab === "ai" ? (
                 <>
-                  <div style={{ fontSize: 13, opacity: 0.7, marginBottom: 6 }}>
-                    These rules will be used by the tagger (Step 7.2) as global behavior.
-                  </div>
                   <textarea
                     value={aiRulesDraft}
                     onChange={(e) => setAiRulesDraft(e.target.value)}
