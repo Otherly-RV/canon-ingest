@@ -6,18 +6,24 @@ export type ProjectSettings = {
   taggingJson: string;
 };
 
+export type PageImage = {
+  pageNumber: number;
+  url: string;
+  width: number;
+  height: number;
+};
+
 export type ProjectManifest = {
   projectId: string;
   createdAt: string;
 
   sourcePdf?: { url: string; filename: string };
-
-  // NEW: Document AI output pointer
   extractedText?: { url: string };
 
-  settings: ProjectSettings;
+  // NEW: page PNGs
+  pages?: PageImage[];
 
-  // NEW: include processed
+  settings: ProjectSettings;
   status: "empty" | "uploaded" | "processed";
 };
 
