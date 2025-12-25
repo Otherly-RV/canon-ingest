@@ -11,6 +11,30 @@ type Manifest = {
   pages?: Array<{ pageNumber: number; url: string; width: number; height: number }>;
 };
 
+type PdfJsLib = {
+  getDocument: (opts: { url: string; withCredentials?: boolean }) => PdfLoadingTask;
+  GlobalWorkerOptions?: { workerSrc: string };
+};
+
+type PdfLoadingTask = {
+  promise: Promise<PdfDocument>;
+};
+
+type PdfDocument = {
+  numPages: number;
+  getPage: (pageNumber: number) => Promise<PdfPage>;
+};
+
+type PdfPage = {
+  getViewport: (opts: { scale: number }) => PdfViewport;
+  render: (opts: { canvasContext: CanvasRenderingContext2D; viewport: PdfViewport }) => { promise: Promise<void> };
+};
+
+type PdfViewport = {
+  width: number;
+  height: number;
+};
+
 async function readErrorText(res: Response) {
   try {
     const t = await res.text();
@@ -41,18 +65,9 @@ function bust(url: string) {
   return u.toString();
 }
 
-function setPdfJsWorker(pdfjs: unknown) {
-  // pdfjs-dist typing is messy across versions; do a safe runtime assignment
-  const lib = pdfjs as {
-    GlobalWorkerOptions?: { workerSrc: string };
-  };
-
-  if (!lib.GlobalWorkerOptions) return;
-
-  lib.GlobalWorkerOptions.workerSrc = new URL(
-    "pdfjs-dist/build/pdf.worker.min.mjs",
-    import.meta.url
-  ).toString();
+function setPdfJsWorker(pdfjs: PdfJsLib) {
+  if (!pdfjs.GlobalWorkerOptions) return;
+  pdfjs.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url).toString();
 }
 
 export default function Page() {
@@ -173,15 +188,15 @@ export default function Page() {
     setRasterProgress({ running: true, currentPage: 0, totalPages: 0, uploaded: 0 });
 
     try {
-      const pdfjs = await import("pdfjs-dist");
+      const pdfjsImport = (await import("pdfjs-dist")) as unknown;
+      const pdfjs = pdfjsImport as PdfJsLib;
+
       setPdfJsWorker(pdfjs);
 
-      const loadingTask = (pdfjs as unknown as { getDocument: (opts: { url: string }) => { promise: Promise<any> } })
-        .getDocument({ url: manifest.sourcePdf.url });
-
+      const loadingTask = pdfjs.getDocument({ url: manifest.sourcePdf.url, withCredentials: false });
       const pdf = await loadingTask.promise;
-      const totalPages = Number(pdf.numPages) || 0;
 
+      const totalPages = Number(pdf.numPages) || 0;
       setRasterProgress((p) => ({ ...p, totalPages }));
 
       for (let pageNumber = 1; pageNumber <= totalPages; pageNumber++) {
@@ -189,7 +204,7 @@ export default function Page() {
 
         const page = await pdf.getPage(pageNumber);
 
-        const scale = 2.0;
+        const scale = 2.0; // adjust if you want higher/lower res
         const viewport = page.getViewport({ scale });
 
         const canvas = document.createElement("canvas");
@@ -201,11 +216,11 @@ export default function Page() {
 
         await page.render({ canvasContext: ctx, viewport }).promise;
 
-        const blob = await new Promise<Blob>((resolve, reject) => {
+        const pngBlob = await new Promise<Blob>((resolve, reject) => {
           canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("toBlob returned null"))), "image/png");
         });
 
-        const file = new File([blob], `page-${pageNumber}.png`, { type: "image/png" });
+        const file = new File([pngBlob], `page-${pageNumber}.png`, { type: "image/png" });
 
         const form = new FormData();
         form.append("file", file);
@@ -295,7 +310,6 @@ export default function Page() {
         <div style={{ marginTop: 18, border: "1px solid #000", borderRadius: 12, padding: 12 }}>
           <div style={{ fontWeight: 800 }}>Working</div>
           <div style={{ marginTop: 6, fontSize: 13, opacity: 0.8 }}>{busy}</div>
-
           {rasterProgress.totalPages > 0 && (
             <div style={{ marginTop: 10, fontSize: 13, opacity: 0.85 }}>
               Raster: page {rasterProgress.currentPage}/{rasterProgress.totalPages} — uploaded {rasterProgress.uploaded}/
