@@ -3,13 +3,30 @@
 import React, { useEffect, useRef, useState } from "react";
 import { upload } from "@vercel/blob/client";
 
+type AssetBBox = { x: number; y: number; w: number; h: number };
+
+type PageAsset = {
+  assetId: string;
+  url: string;
+  bbox: AssetBBox;
+  tags?: string[];
+};
+
 type Manifest = {
   projectId: string;
   createdAt: string;
   status: "empty" | "uploaded" | "processed";
   sourcePdf?: { url: string; filename: string };
   extractedText?: { url: string };
-  pages?: Array<{ pageNumber: number; url: string; width: number; height: number; tags?: string[] }>;
+  docAiJson?: { url: string };
+  pages?: Array<{
+    pageNumber: number;
+    url: string;
+    width: number;
+    height: number;
+    tags?: string[];
+    assets?: PageAsset[];
+  }>;
   settings: {
     aiRules: string;
     uiFieldsJson: string;
@@ -182,23 +199,27 @@ export default function Page() {
   const [aiRulesDraft, setAiRulesDraft] = useState<string>("");
   const [taggingJsonDraft, setTaggingJsonDraft] = useState<string>("");
 
-  const [rasterProgress, setRasterProgress] = useState<{
-    running: boolean;
-    currentPage: number;
-    totalPages: number;
-    uploaded: number;
-  }>({ running: false, currentPage: 0, totalPages: 0, uploaded: 0 });
+  const [rasterProgress, setRasterProgress] = useState({
+    running: false,
+    currentPage: 0,
+    totalPages: 0,
+    uploaded: 0
+  });
+
+  const [splitProgress, setSplitProgress] = useState({
+    running: false,
+    page: 0,
+    totalPages: 0,
+    assetsUploaded: 0
+  });
 
   async function loadManifest(url: string) {
     const mRes = await fetch(bust(url), { cache: "no-store" });
     if (!mRes.ok) throw new Error(`Failed to fetch manifest: ${await readErrorText(mRes)}`);
     const m = (await mRes.json()) as Manifest;
     setManifest(m);
-
-    // Load settings drafts from manifest (so UI edits are based on persisted state)
     setAiRulesDraft(m.settings?.aiRules ?? "");
     setTaggingJsonDraft(m.settings?.taggingJson ?? "");
-
     return m;
   }
 
@@ -246,7 +267,7 @@ export default function Page() {
 
   async function uploadSource(file: File) {
     setLastError("");
-    setBusy("Uploading SOURCE (PDF) to Blob...");
+    setBusy("Uploading SOURCE...");
 
     try {
       const p = projectId && manifestUrl ? { projectId, manifestUrl } : await createProject();
@@ -265,9 +286,7 @@ export default function Page() {
       setManifestUrl(j.manifestUrl);
       setUrlParams(p.projectId, j.manifestUrl);
 
-      const m = await loadManifest(j.manifestUrl);
-      if (!m.sourcePdf?.url) throw new Error("Upload finished but manifest has no sourcePdf.url (unexpected).");
-
+      await loadManifest(j.manifestUrl);
       await refreshProjects();
     } finally {
       setBusy("");
@@ -277,11 +296,11 @@ export default function Page() {
   async function processPdf() {
     setLastError("");
 
-    if (!projectId || !manifestUrl) return setLastError("Missing projectId/manifestUrl (upload a PDF first).");
-    if (!manifest?.sourcePdf?.url) return setLastError("No source PDF in manifest (upload a PDF first).");
+    if (!projectId || !manifestUrl) return setLastError("Missing projectId/manifestUrl");
+    if (!manifest?.sourcePdf?.url) return setLastError("No source PDF");
     if (busy) return;
 
-    setBusy("Processing PDF with Document AI...");
+    setBusy("Processing...");
 
     try {
       const r = await fetch("/api/projects/process", {
@@ -290,7 +309,7 @@ export default function Page() {
         body: JSON.stringify({ projectId, manifestUrl })
       });
 
-      if (!r.ok) throw new Error(`Process failed (${r.status}): ${await readErrorText(r)}`);
+      if (!r.ok) throw new Error(await readErrorText(r));
 
       const j = (await r.json()) as { ok: boolean; manifestUrl?: string; error?: string };
       if (!j.ok || !j.manifestUrl) throw new Error(j.error || "Process failed (bad response)");
@@ -312,7 +331,7 @@ export default function Page() {
       body: JSON.stringify({ projectId, manifestUrl, pageNumber, url, width, height })
     });
 
-    if (!r.ok) throw new Error(`Record page ${pageNumber} failed: ${await readErrorText(r)}`);
+    if (!r.ok) throw new Error(await readErrorText(r));
 
     const j = (await r.json()) as { ok: boolean; manifestUrl?: string; error?: string };
     if (!j.ok || !j.manifestUrl) throw new Error(j.error || `Record page ${pageNumber} failed (bad response)`);
@@ -326,11 +345,11 @@ export default function Page() {
   async function rasterizeToPngs() {
     setLastError("");
 
-    if (!projectId || !manifestUrl) return setLastError("Missing projectId/manifestUrl (upload a PDF first).");
-    if (!manifest?.sourcePdf?.url) return setLastError("No source PDF in manifest (upload a PDF first).");
+    if (!projectId || !manifestUrl) return setLastError("Missing projectId/manifestUrl");
+    if (!manifest?.sourcePdf?.url) return setLastError("No source PDF");
     if (busy || rasterProgress.running) return;
 
-    setBusy("Rasterizing PDF pages to PNG (client-side) and uploading directly to Blob...");
+    setBusy("Rasterizing...");
     setRasterProgress({ running: true, currentPage: 0, totalPages: 0, uploaded: 0 });
 
     try {
@@ -348,7 +367,6 @@ export default function Page() {
         setRasterProgress((p) => ({ ...p, currentPage: pageNumber }));
 
         const page = await pdf.getPage(pageNumber);
-
         const scale = 1.5;
         const viewport = page.getViewport({ scale });
 
@@ -387,7 +405,7 @@ export default function Page() {
   }
 
   async function deleteProject(targetProjectId: string) {
-    const ok = window.confirm(`Delete project ${targetProjectId}? This deletes its PDF, text, pages, manifest.`);
+    const ok = window.confirm(`Delete project ${targetProjectId}?`);
     if (!ok) return;
 
     setLastError("");
@@ -449,15 +467,14 @@ export default function Page() {
   async function saveSettings() {
     setSettingsError("");
     if (!projectId || !manifestUrl) {
-      setSettingsError("No active project selected.");
+      setSettingsError("No active project.");
       return;
     }
 
-    // Validate taggingJson before sending
     try {
       JSON.parse(taggingJsonDraft);
     } catch {
-      setSettingsError("Tagging JSON is not valid JSON.");
+      setSettingsError("Invalid JSON.");
       return;
     }
 
@@ -466,18 +483,13 @@ export default function Page() {
       const r = await fetch("/api/projects/settings/save", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          projectId,
-          manifestUrl,
-          aiRules: aiRulesDraft,
-          taggingJson: taggingJsonDraft
-        })
+        body: JSON.stringify({ projectId, manifestUrl, aiRules: aiRulesDraft, taggingJson: taggingJsonDraft })
       });
 
       if (!r.ok) throw new Error(await readErrorText(r));
 
       const j = (await r.json()) as { ok: boolean; manifestUrl?: string; error?: string };
-      if (!j.ok || !j.manifestUrl) throw new Error(j.error || "Save settings failed (bad response)");
+      if (!j.ok || !j.manifestUrl) throw new Error(j.error || "Save failed (bad response)");
 
       setManifestUrl(j.manifestUrl);
       setUrlParams(projectId, j.manifestUrl);
@@ -491,8 +503,119 @@ export default function Page() {
     }
   }
 
+  async function recordAsset(pageNumber: number, assetId: string, url: string, bbox: AssetBBox) {
+    const r = await fetch("/api/projects/assets/record", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ projectId, manifestUrl, pageNumber, assetId, url, bbox })
+    });
+
+    if (!r.ok) throw new Error(await readErrorText(r));
+
+    const j = (await r.json()) as { ok: boolean; manifestUrl?: string; error?: string };
+    if (!j.ok || !j.manifestUrl) throw new Error(j.error || "Record asset failed (bad response)");
+
+    setManifestUrl(j.manifestUrl);
+    setUrlParams(projectId, j.manifestUrl);
+    await loadManifest(j.manifestUrl);
+  }
+
+  async function splitImages() {
+    setLastError("");
+
+    if (!projectId || !manifestUrl) return setLastError("Missing projectId/manifestUrl");
+    if (!manifest?.docAiJson?.url) return setLastError("No DocAI JSON");
+    if (!manifest.pages?.length) return setLastError("No page PNGs");
+    if (busy || splitProgress.running) return;
+
+    setBusy("Splitting...");
+    setSplitProgress({ running: true, page: 0, totalPages: manifest.pages.length, assetsUploaded: 0 });
+
+    try {
+      const detectRes = await fetch("/api/projects/assets/detect", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId, manifestUrl })
+      });
+
+      if (!detectRes.ok) throw new Error(await readErrorText(detectRes));
+
+      const detected = (await detectRes.json()) as {
+        ok: boolean;
+        pages?: Array<{ pageNumber: number; boxes: AssetBBox[] }>;
+        error?: string;
+      };
+
+      if (!detected.ok || !Array.isArray(detected.pages)) throw new Error(detected.error || "Detect failed (bad response)");
+
+      const byPage = new Map<number, AssetBBox[]>();
+      for (const p of detected.pages) {
+        byPage.set(p.pageNumber, Array.isArray(p.boxes) ? p.boxes : []);
+      }
+
+      // Use the latest manifest from state for page URLs/sizes
+      const pages = manifest.pages;
+
+      for (const page of pages) {
+        setSplitProgress((s) => ({ ...s, page: page.pageNumber }));
+
+        const boxes = byPage.get(page.pageNumber) ?? [];
+        if (boxes.length === 0) continue;
+
+        const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+          const el = new Image();
+          el.crossOrigin = "anonymous";
+          el.onload = () => resolve(el);
+          el.onerror = () => reject(new Error(`Failed to load page image p${page.pageNumber}`));
+          el.src = bust(page.url);
+        });
+
+        for (let i = 0; i < boxes.length; i++) {
+          const b = boxes[i];
+
+          const canvas = document.createElement("canvas");
+          const ctx = canvas.getContext("2d");
+          if (!ctx) throw new Error("Cannot create canvas 2D context");
+
+          canvas.width = Math.max(1, Math.floor(b.w));
+          canvas.height = Math.max(1, Math.floor(b.h));
+
+          ctx.drawImage(img, b.x, b.y, b.w, b.h, 0, 0, canvas.width, canvas.height);
+
+          const pngBlob = await new Promise<Blob>((resolve, reject) => {
+            canvas.toBlob((bb) => (bb ? resolve(bb) : reject(new Error("toBlob returned null"))), "image/png");
+          });
+
+          const assetId = `p${page.pageNumber}-img${String(i + 1).padStart(2, "0")}`;
+          const file = new File([pngBlob], `${assetId}.png`, { type: "image/png" });
+
+          const uploaded = await upload(`projects/${projectId}/assets/p${page.pageNumber}/${assetId}.png`, file, {
+            access: "public",
+            handleUploadUrl: "/api/blob"
+          });
+
+          await recordAsset(page.pageNumber, assetId, uploaded.url, b);
+
+          setSplitProgress((s) => ({ ...s, assetsUploaded: s.assetsUploaded + 1 }));
+        }
+      }
+
+      await refreshProjects();
+    } catch (e) {
+      setLastError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy("");
+      setSplitProgress((s) => ({ ...s, running: false }));
+    }
+  }
+
   const pagesCount = manifest?.pages?.length ?? 0;
-  const taggedCount = (manifest?.pages ?? []).filter((p) => Array.isArray(p.tags) && p.tags.length > 0).length;
+
+  const assetsCount =
+    (manifest?.pages ?? []).reduce((acc, p) => acc + (Array.isArray(p.assets) ? p.assets.length : 0), 0) ?? 0;
+
+  const taggedPagesCount =
+    (manifest?.pages ?? []).filter((p) => Array.isArray(p.tags) && p.tags.length > 0).length ?? 0;
 
   return (
     <div style={{ minHeight: "100vh", padding: 28 }}>
@@ -542,47 +665,22 @@ export default function Page() {
           >
             Rasterize PNGs
           </button>
-          <button
-  type="button"
-  disabled={!manifest?.extractedText?.url || !(manifest?.pages?.length && manifest.pages.length > 0) || !!busy}
-  onClick={async () => {
-    setLastError("");
-    if (!projectId || !manifestUrl) return setLastError("Missing projectId/manifestUrl");
-    setBusy("Tagging images...");
-    try {
-      const r = await fetch("/api/projects/tag-images", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectId, manifestUrl })
-      });
-      if (!r.ok) throw new Error(await readErrorText(r));
-      const j = (await r.json()) as { ok: boolean; manifestUrl?: string; error?: string };
-      if (!j.ok || !j.manifestUrl) throw new Error(j.error || "Tag images failed (bad response)");
 
-      setManifestUrl(j.manifestUrl);
-      setUrlParams(projectId, j.manifestUrl);
-      await loadManifest(j.manifestUrl);
-      await refreshProjects();
-    } catch (e) {
-      setLastError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy("");
-    }
-  }}
-  style={{
-    border: "1px solid #000",
-    background:
-      manifest?.extractedText?.url && manifest?.pages?.length && !busy ? "#000" : "#fff",
-    color:
-      manifest?.extractedText?.url && manifest?.pages?.length && !busy ? "#fff" : "#000",
-    padding: "10px 12px",
-    borderRadius: 12,
-    opacity:
-      manifest?.extractedText?.url && manifest?.pages?.length && !busy ? 1 : 0.4
-  }}
->
-  Tag images
-</button>
+          <button
+            type="button"
+            disabled={!manifest?.docAiJson?.url || !manifest?.pages?.length || !!busy || splitProgress.running}
+            onClick={() => void splitImages()}
+            style={{
+              border: "1px solid #000",
+              background: manifest?.docAiJson?.url && manifest?.pages?.length && !busy ? "#000" : "#fff",
+              color: manifest?.docAiJson?.url && manifest?.pages?.length && !busy ? "#fff" : "#000",
+              padding: "10px 12px",
+              borderRadius: 12,
+              opacity: manifest?.docAiJson?.url && manifest?.pages?.length && !busy ? 1 : 0.4
+            }}
+          >
+            Split images
+          </button>
         </div>
       </div>
 
@@ -590,10 +688,17 @@ export default function Page() {
         <div style={{ marginTop: 18, border: "1px solid #000", borderRadius: 12, padding: 12 }}>
           <div style={{ fontWeight: 800 }}>Working</div>
           <div style={{ marginTop: 6, fontSize: 13, opacity: 0.8 }}>{busy}</div>
+
           {rasterProgress.totalPages > 0 && (
             <div style={{ marginTop: 10, fontSize: 13, opacity: 0.85 }}>
-              Raster: page {rasterProgress.currentPage}/{rasterProgress.totalPages} — uploaded {rasterProgress.uploaded}/
+              Raster: {rasterProgress.currentPage}/{rasterProgress.totalPages} · {rasterProgress.uploaded}/
               {rasterProgress.totalPages}
+            </div>
+          )}
+
+          {splitProgress.totalPages > 0 && (
+            <div style={{ marginTop: 10, fontSize: 13, opacity: 0.85 }}>
+              Split: {splitProgress.page}/{splitProgress.totalPages} · {splitProgress.assetsUploaded}
             </div>
           )}
         </div>
@@ -608,11 +713,9 @@ export default function Page() {
 
       <div style={{ marginTop: 18, borderTop: "1px solid rgba(0,0,0,0.2)" }} />
 
-      {/* Settings panel */}
       <div style={{ marginTop: 18, border: "1px solid #000", borderRadius: 12 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: 14 }}>
           <div style={{ fontWeight: 800 }}>Settings</div>
-
           <button
             type="button"
             aria-label={settingsOpen ? "Collapse settings" : "Expand settings"}
@@ -658,56 +761,46 @@ export default function Page() {
 
             {settingsError && (
               <div style={{ marginTop: 10, border: "1px solid #000", borderRadius: 12, padding: 10 }}>
-                <div style={{ fontWeight: 800, fontSize: 13 }}>Settings error</div>
+                <div style={{ fontWeight: 800, fontSize: 13 }}>Error</div>
                 <div style={{ marginTop: 6, fontSize: 13, whiteSpace: "pre-wrap" }}>{settingsError}</div>
               </div>
             )}
 
             <div style={{ marginTop: 12 }}>
               {settingsTab === "ai" ? (
-                <>
-                  <textarea
-                    value={aiRulesDraft}
-                    onChange={(e) => setAiRulesDraft(e.target.value)}
-                    placeholder="Write global AI rules..."
-                    style={{
-                      width: "100%",
-                      minHeight: 180,
-                      border: "1px solid rgba(0,0,0,0.35)",
-                      borderRadius: 12,
-                      padding: 12,
-                      fontSize: 13,
-                      fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
-                    }}
-                  />
-                </>
+                <textarea
+                  value={aiRulesDraft}
+                  onChange={(e) => setAiRulesDraft(e.target.value)}
+                  style={{
+                    width: "100%",
+                    minHeight: 180,
+                    border: "1px solid rgba(0,0,0,0.35)",
+                    borderRadius: 12,
+                    padding: 12,
+                    fontSize: 13,
+                    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
+                  }}
+                />
               ) : (
-                <>
-                  <div style={{ fontSize: 13, opacity: 0.7, marginBottom: 6 }}>
-                    Must be valid JSON. This will directly influence image tagging behavior (Step 7.2).
-                  </div>
-                  <textarea
-                    value={taggingJsonDraft}
-                    onChange={(e) => setTaggingJsonDraft(e.target.value)}
-                    placeholder='{"rules":[...]}'
-                    style={{
-                      width: "100%",
-                      minHeight: 180,
-                      border: "1px solid rgba(0,0,0,0.35)",
-                      borderRadius: 12,
-                      padding: 12,
-                      fontSize: 13,
-                      fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
-                    }}
-                  />
-                </>
+                <textarea
+                  value={taggingJsonDraft}
+                  onChange={(e) => setTaggingJsonDraft(e.target.value)}
+                  style={{
+                    width: "100%",
+                    minHeight: 180,
+                    border: "1px solid rgba(0,0,0,0.35)",
+                    borderRadius: 12,
+                    padding: 12,
+                    fontSize: 13,
+                    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
+                  }}
+                />
               )}
             </div>
           </div>
         )}
       </div>
 
-      {/* Projects panel */}
       <div style={{ marginTop: 18, border: "1px solid #000", borderRadius: 12 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: 14 }}>
           <div style={{ fontWeight: 800 }}>Projects</div>
@@ -820,7 +913,6 @@ export default function Page() {
         )}
       </div>
 
-      {/* Cloud state panel */}
       <div style={{ marginTop: 18, border: "1px solid #000", borderRadius: 12 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: 14 }}>
           <div style={{ fontWeight: 800 }}>Cloud state</div>
@@ -848,6 +940,7 @@ export default function Page() {
             <div>
               <span style={{ opacity: 0.7 }}>projectId:</span> {projectId || "—"}
             </div>
+
             <div style={{ marginTop: 6 }}>
               <span style={{ opacity: 0.7 }}>status:</span> {manifest?.status || "—"}
             </div>
@@ -868,11 +961,20 @@ export default function Page() {
             <div style={{ fontSize: 12, wordBreak: "break-all" }}>{manifest?.extractedText?.url || "—"}</div>
 
             <div style={{ marginTop: 10 }}>
-              <span style={{ opacity: 0.7 }}>pages (PNGs):</span> {pagesCount}
+              <span style={{ opacity: 0.7 }}>docAiJson:</span>
+            </div>
+            <div style={{ fontSize: 12, wordBreak: "break-all" }}>{manifest?.docAiJson?.url || "—"}</div>
+
+            <div style={{ marginTop: 10 }}>
+              <span style={{ opacity: 0.7 }}>pages:</span> {pagesCount}
             </div>
 
             <div style={{ marginTop: 6 }}>
-              <span style={{ opacity: 0.7 }}>tagged pages:</span> {taggedCount}/{pagesCount}
+              <span style={{ opacity: 0.7 }}>assets:</span> {assetsCount}
+            </div>
+
+            <div style={{ marginTop: 6 }}>
+              <span style={{ opacity: 0.7 }}>tagged pages:</span> {taggedPagesCount}/{pagesCount}
             </div>
           </div>
         )}
