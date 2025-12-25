@@ -171,7 +171,6 @@ export default function Page() {
       loadManifest(m).catch((e) => setLastError(e instanceof Error ? e.message : String(e)));
     }
     refreshProjects().catch(() => {});
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function createProject() {
