@@ -1,74 +1,91 @@
 import { NextResponse } from "next/server";
 import { put } from "@vercel/blob";
-import { processWithDocAI } from "@/app/lib/docai";
 import { saveManifest, type ProjectManifest } from "@/app/lib/manifest";
+import { processWithDocAI } from "@/app/lib/docai";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-type ReqBody = { projectId?: string; manifestUrl?: string };
+type Body = {
+  projectId?: string;
+  manifestUrl?: string;
+};
 
 function baseUrl(u: string) {
   const url = new URL(u);
   return `${url.origin}${url.pathname}`;
 }
 
-export async function POST(req: Request) {
-  let body: ReqBody;
+async function fetchManifest(manifestUrlRaw: string): Promise<ProjectManifest> {
+  const url = baseUrl(manifestUrlRaw);
+  const res = await fetch(`${url}?v=${Date.now()}`, {
+    cache: "no-store",
+    headers: { "Cache-Control": "no-cache" }
+  });
+  if (!res.ok) throw new Error(`Cannot fetch manifest (${res.status})`);
+  return (await res.json()) as ProjectManifest;
+}
+
+export async function POST(req: Request): Promise<Response> {
+  let body: Body;
   try {
-    body = (await req.json()) as ReqBody;
+    body = (await req.json()) as Body;
   } catch {
     return NextResponse.json({ ok: false, error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const projectId = body.projectId;
-  const manifestUrlRaw = body.manifestUrl;
+  const projectId = String(body.projectId || "").trim();
+  const manifestUrlRaw = String(body.manifestUrl || "").trim();
 
   if (!projectId || !manifestUrlRaw) {
     return NextResponse.json({ ok: false, error: "Missing projectId/manifestUrl" }, { status: 400 });
   }
 
-  // Always fetch manifest with cache-bust
-  const manifestUrl = baseUrl(manifestUrlRaw);
-  const mRes = await fetch(`${manifestUrl}?v=${Date.now()}`, {
-    cache: "no-store",
-    headers: { "Cache-Control": "no-cache" }
-  });
-
-  if (!mRes.ok) {
-    return NextResponse.json({ ok: false, error: `Cannot fetch manifest (${mRes.status})` }, { status: 400 });
+  let manifest: ProjectManifest;
+  try {
+    manifest = await fetchManifest(manifestUrlRaw);
+  } catch (e) {
+    return NextResponse.json({ ok: false, error: e instanceof Error ? e.message : String(e) }, { status: 400 });
   }
-  const manifest = (await mRes.json()) as ProjectManifest;
 
-  if (!manifest.sourcePdf?.url) {
+  if (manifest.projectId !== projectId) {
+    return NextResponse.json({ ok: false, error: "projectId does not match manifest" }, { status: 400 });
+  }
+
+  const sourceUrl = manifest.sourcePdf?.url;
+  if (!sourceUrl) {
     return NextResponse.json({ ok: false, error: "No source PDF uploaded." }, { status: 400 });
   }
 
-  const pdfRes = await fetch(`${manifest.sourcePdf.url}?v=${Date.now()}`, {
-    cache: "no-store",
-    headers: { "Cache-Control": "no-cache" }
+  // 1) Run Document AI (text + raw JSON)
+  const result = await processWithDocAI(sourceUrl);
+
+  // 2) Store extracted text in Blob
+  const textBlob = await put(`projects/${projectId}/extracted/text.txt`, result.text, {
+    access: "public",
+    contentType: "text/plain; charset=utf-8",
+    addRandomSuffix: false
   });
-  if (!pdfRes.ok) {
-    return NextResponse.json({ ok: false, error: `Cannot fetch PDF (${pdfRes.status})` }, { status: 400 });
-  }
-  const pdfBytes = Buffer.from(await pdfRes.arrayBuffer());
 
-  const extract = await processWithDocAI(pdfBytes);
+  // 3) Store raw DocAI JSON in Blob (for image detection step)
+  const rawJsonString = JSON.stringify(result.raw, null, 2);
+  const docAiBlob = await put(`projects/${projectId}/docai/result.json`, rawJsonString, {
+    access: "public",
+    contentType: "application/json",
+    addRandomSuffix: false
+  });
 
-  const textBlob = await put(
-    `projects/${projectId}/extracted/text.json`,
-    JSON.stringify({ fullText: extract.fullText, pages: extract.pages }, null, 2),
-    { access: "public", contentType: "application/json", addRandomSuffix: false }
-  );
-
+  // 4) Update manifest
   manifest.extractedText = { url: textBlob.url };
+  manifest.docAiJson = { url: docAiBlob.url };
   manifest.status = "processed";
 
   const newManifestUrl = await saveManifest(manifest);
 
   return NextResponse.json({
     ok: true,
+    manifestUrl: newManifestUrl,
     extractedTextUrl: textBlob.url,
-    manifestUrl: newManifestUrl
+    docAiJsonUrl: docAiBlob.url
   });
 }
