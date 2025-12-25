@@ -64,9 +64,18 @@ export async function POST(req: Request): Promise<Response> {
       return NextResponse.json({ ok: false, error: "projectId does not match manifest" }, { status: 400 });
     }
 
-    // ✅ Delete ALL blob objects for this assetId (handles duplicates / random suffixes)
-    const prefix = `projects/${projectId}/assets/p${pageNumber}/`;
     const urlsToDelete: string[] = [];
+
+    // 1) Delete the exact URL referenced by the manifest (covers .png/.jpg/etc).
+    // This is the most reliable deletion path.
+    const pageEntry = Array.isArray(manifest.pages)
+      ? manifest.pages.find((x) => x.pageNumber === pageNumber)
+      : undefined;
+    const assetEntry = pageEntry?.assets?.find((a) => a.assetId === assetId);
+    if (assetEntry?.url) urlsToDelete.push(assetEntry.url);
+
+    // 2) Also delete any variants under the folder (handles duplicates / random suffixes)
+    const prefix = `projects/${projectId}/assets/p${pageNumber}/`;
 
     let cursor: string | undefined = undefined;
     for (;;) {
@@ -74,8 +83,9 @@ export async function POST(req: Request): Promise<Response> {
 
       for (const b of page.blobs) {
         const pathname = typeof b.pathname === "string" ? b.pathname : "";
-        // match: .../p13-img05*.png (including random suffix variants)
-        if (pathname.includes(`/${assetId}`) && pathname.endsWith(".png")) {
+        // match: .../p13-img05*.(png|jpg|jpeg|webp) or any extension.
+        // We intentionally do NOT filter by extension to avoid "delete then resurrect".
+        if (pathname.includes(`/${assetId}`)) {
           if (typeof b.url === "string" && b.url) urlsToDelete.push(b.url);
         }
       }
@@ -85,15 +95,17 @@ export async function POST(req: Request): Promise<Response> {
       if (!cursor) break;
     }
 
-    if (urlsToDelete.length > 0) {
-      await del(urlsToDelete);
-    }
+    // De-dupe URLs before delete
+    const uniqUrls = Array.from(new Set(urlsToDelete));
+    if (uniqUrls.length > 0) await del(uniqUrls);
 
-    // Remove from manifest (so UI stops referencing it)
+    // Remove from manifest + tombstone it (prevents later background saves from resurrecting it)
     if (Array.isArray(manifest.pages)) {
       const p = manifest.pages.find((x) => x.pageNumber === pageNumber);
-      if (p && Array.isArray(p.assets)) {
-        p.assets = p.assets.filter((a) => a.assetId !== assetId);
+      if (p) {
+        if (Array.isArray(p.assets)) p.assets = p.assets.filter((a) => a.assetId !== assetId);
+        if (!Array.isArray(p.deletedAssetIds)) p.deletedAssetIds = [];
+        if (!p.deletedAssetIds.includes(assetId)) p.deletedAssetIds.push(assetId);
       }
     }
 
@@ -102,7 +114,7 @@ export async function POST(req: Request): Promise<Response> {
     return NextResponse.json({
       ok: true,
       manifestUrl: newManifestUrl,
-      deletedCount: urlsToDelete.length
+      deletedCount: uniqUrls.length
     });
   } catch (e) {
     return NextResponse.json({ ok: false, error: e instanceof Error ? e.message : String(e) }, { status: 500 });
