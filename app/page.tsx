@@ -861,6 +861,44 @@ async function splitImages() {
 >
   Prune assets
 </button>
+          <button
+  type="button"
+  disabled={!manifestUrl || !projectId || !!busy}
+  onClick={async () => {
+    setLastError("");
+    if (!projectId || !manifestUrl) return;
+
+    setBusy("Rebuilding assets...");
+    try {
+      const r = await fetch("/api/projects/assets/rebuild-index", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId, manifestUrl })
+      });
+
+      const j = (await r.json()) as { ok: boolean; manifestUrl?: string; error?: string };
+      if (!r.ok || !j.ok || !j.manifestUrl) throw new Error(j.error || `Rebuild failed (${r.status})`);
+
+      setManifestUrl(j.manifestUrl);
+      setUrlParams(projectId, j.manifestUrl);
+      await loadManifest(j.manifestUrl);
+      await refreshProjects();
+    } catch (e) {
+      setLastError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy("");
+    }
+  }}
+  style={{
+    border: "1px solid #000",
+    background: "#fff",
+    padding: "10px 12px",
+    borderRadius: 12,
+    opacity: !manifestUrl || !projectId || busy ? 0.4 : 1
+  }}
+>
+  Rebuild assets
+</button>
         </div>
       </div>
 
