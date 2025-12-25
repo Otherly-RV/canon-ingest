@@ -7,8 +7,8 @@ export const dynamic = "force-dynamic";
 type Body = {
   projectId?: string;
   manifestUrl?: string;
-  limitAssets?: number; // optional safety
-  overwrite?: boolean; // optional: retag even if tags exist
+  limitAssets?: number;
+  overwrite?: boolean;
 };
 
 type DocAiRaw = {
@@ -107,7 +107,7 @@ function normalizeTags(tags: string[]): string[] {
   );
 }
 
-async function callTagger(args: {
+async function callGeminiTagger(args: {
   aiRules: string;
   taggingJson: string;
   pageText: string;
@@ -118,7 +118,7 @@ async function callTagger(args: {
   const apiKey = getEnv("GEMINI_API_KEY");
   const model = "gemini-2.5-pro";
 
-  // Fetch the PNG (real vision input)
+  // Fetch PNG (vision input)
   const imgRes = await fetch(`${baseUrl(args.imageUrl)}?v=${Date.now()}`, { cache: "no-store" });
   if (!imgRes.ok) throw new Error(`Cannot fetch image (${imgRes.status})`);
   const imgBuf = await imgRes.arrayBuffer();
@@ -126,7 +126,6 @@ async function callTagger(args: {
 
   const system = `Return ONLY valid JSON with keys: "tags" (array of strings) and "rationale" (string). No markdown. No extra keys.`;
 
-  // We keep your taggingJson “as rules” but the model must obey it.
   const promptObj = {
     aiRules: args.aiRules,
     taggingJson: args.taggingJson,
@@ -179,7 +178,6 @@ async function callTagger(args: {
 
   const data = (await resp.json()) as unknown;
 
-  // Try to read the first candidate text
   const text =
     (data as { candidates?: Array<{ content?: { parts?: Array<{ text?: unknown }> } }> }).candidates?.[0]?.content
       ?.parts?.map((p) => (typeof p.text === "string" ? p.text : ""))
@@ -187,7 +185,6 @@ async function callTagger(args: {
 
   if (!text) throw new Error("Gemini returned empty response text");
 
-  // Expect JSON; fallback to extracting first {...}
   const jsonStr = text.trim().startsWith("{") ? text.trim() : extractFirstJsonObject(text);
   if (!jsonStr) throw new Error("Gemini returned non-JSON output");
 
