@@ -18,8 +18,8 @@ export type PageAsset = {
   url: string;
   bbox: AssetBBox;
   tags?: string[];
+  tagRationale?: string;
 };
-
 export type PageImage = {
   pageNumber: number;
   url: string;
