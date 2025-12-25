@@ -782,11 +782,13 @@ async function deleteAsset(pageNumber: number, assetId: string, assetUrl: string
           >
             Tag images
           </button>
-          <button
+         <button
   type="button"
   disabled={!manifestUrl || !projectId || !!busy}
   onClick={async () => {
     setLastError("");
+    if (!projectId || !manifestUrl) return;
+
     setBusy("Pruning missing assets...");
     try {
       const r = await fetch("/api/projects/assets/prune-missing", {
@@ -794,12 +796,13 @@ async function deleteAsset(pageNumber: number, assetId: string, assetUrl: string
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ projectId, manifestUrl })
       });
-      if (!r.ok) throw new Error(await readErrorText(r));
       const j = (await r.json()) as { ok: boolean; manifestUrl?: string; error?: string };
-      if (!j.ok || !j.manifestUrl) throw new Error(j.error || "Prune failed");
+      if (!r.ok || !j.ok || !j.manifestUrl) throw new Error(j.error || "Prune failed");
+
       setManifestUrl(j.manifestUrl);
       setUrlParams(projectId, j.manifestUrl);
       await loadManifest(j.manifestUrl);
+      await refreshProjects();
     } catch (e) {
       setLastError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -814,7 +817,7 @@ async function deleteAsset(pageNumber: number, assetId: string, assetUrl: string
     opacity: !manifestUrl || !projectId || busy ? 0.4 : 1
   }}
 >
-  Prune missing assets
+  Prune assets
 </button>
         </div>
       </div>
