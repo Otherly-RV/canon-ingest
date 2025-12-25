@@ -270,15 +270,24 @@ async function deleteAsset(pageNumber: number, assetId: string, assetUrl: string
     });
   }
 }
-  async function loadManifest(url: string) {
-    const mRes = await fetch(bust(url), { cache: "no-store" });
-    if (!mRes.ok) throw new Error(`Failed to fetch manifest: ${await readErrorText(mRes)}`);
-    const m = (await mRes.json()) as Manifest;
-    setManifest(m);
-    setAiRulesDraft(m.settings?.aiRules ?? "");
-    setTaggingJsonDraft(m.settings?.taggingJson ?? "");
-    return m;
-  }
+async function loadManifest(url: string) {
+  const mRes = await fetch("/api/projects/manifest/read", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ manifestUrl: url })
+  });
+
+  if (!mRes.ok) throw new Error(`Failed to read manifest: ${await readErrorText(mRes)}`);
+
+  const payload = (await mRes.json()) as { ok: boolean; manifest?: Manifest; error?: string };
+  if (!payload.ok || !payload.manifest) throw new Error(payload.error || "Bad manifest read response");
+
+  const m = payload.manifest;
+  setManifest(m);
+  setAiRulesDraft(m.settings?.aiRules ?? "");
+  setTaggingJsonDraft(m.settings?.taggingJson ?? "");
+  return m;
+}
 
   async function refreshProjects() {
     setProjectsBusy(true);
