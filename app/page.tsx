@@ -8,6 +8,7 @@ type Manifest = {
   status: "empty" | "uploaded" | "processed";
   sourcePdf?: { url: string; filename: string };
   extractedText?: { url: string };
+  pages?: Array<{ pageNumber: number; url: string; width: number; height: number }>;
 };
 
 async function readErrorText(res: Response) {
@@ -49,6 +50,15 @@ export default function Page() {
   const [manifest, setManifest] = useState<Manifest | null>(null);
   const [lastError, setLastError] = useState<string>("");
 
+  const [cloudOpen, setCloudOpen] = useState(true);
+
+  const [rasterProgress, setRasterProgress] = useState<{
+    running: boolean;
+    currentPage: number;
+    totalPages: number;
+    uploaded: number;
+  }>({ running: false, currentPage: 0, totalPages: 0, uploaded: 0 });
+
   async function loadManifest(url: string) {
     const mRes = await fetch(bust(url), { cache: "no-store" });
     if (!mRes.ok) throw new Error(`Failed to fetch manifest: ${await readErrorText(mRes)}`);
@@ -64,6 +74,7 @@ export default function Page() {
       setManifestUrl(m);
       loadManifest(m).catch((e) => setLastError(e instanceof Error ? e.message : String(e)));
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function createProject() {
@@ -103,9 +114,7 @@ export default function Page() {
       setUrlParams(p.projectId, j.manifestUrl);
 
       const m = await loadManifest(j.manifestUrl);
-      if (!m.sourcePdf?.url) {
-        throw new Error("Upload finished but manifest still has no sourcePdf.url (cache/overwrite issue).");
-      }
+      if (!m.sourcePdf?.url) throw new Error("Upload finished but manifest has no sourcePdf.url (unexpected).");
     } finally {
       setBusy("");
     }
@@ -115,7 +124,7 @@ export default function Page() {
     setLastError("");
 
     if (!projectId || !manifestUrl) return setLastError("Missing projectId/manifestUrl (upload a PDF first).");
-    if (!manifest?.sourcePdf?.url) return setLastError("No source PDF in manifest (upload again).");
+    if (!manifest?.sourcePdf?.url) return setLastError("No source PDF in manifest (upload a PDF first).");
     if (busy) return;
 
     setBusy("Processing PDF with Document AI...");
@@ -140,13 +149,102 @@ export default function Page() {
     }
   }
 
+  async function rasterizeToPngs() {
+    setLastError("");
+
+    if (!projectId || !manifestUrl) return setLastError("Missing projectId/manifestUrl (upload a PDF first).");
+    if (!manifest?.sourcePdf?.url) return setLastError("No source PDF in manifest (upload a PDF first).");
+    if (busy || rasterProgress.running) return;
+
+    setBusy("Rasterizing PDF pages to PNG (client-side) and uploading...");
+    setRasterProgress({ running: true, currentPage: 0, totalPages: 0, uploaded: 0 });
+
+    try {
+      const pdfjs = await import("pdfjs-dist");
+
+      // Use bundled worker (no CDN)
+      // @ts-expect-error - pdfjs-dist exposes GlobalWorkerOptions at runtime
+      pdfjs.GlobalWorkerOptions.workerSrc = new URL(
+        // @ts-expect-error - worker module path is provided by pdfjs-dist
+        "pdfjs-dist/build/pdf.worker.min.mjs",
+        import.meta.url
+      ).toString();
+
+      const loadingTask = pdfjs.getDocument({
+        url: manifest.sourcePdf.url,
+        withCredentials: false
+      });
+
+      const pdf = await loadingTask.promise;
+      const totalPages = pdf.numPages;
+
+      setRasterProgress((p) => ({ ...p, totalPages }));
+
+      // Sequential render/upload to avoid freezing and huge RAM
+      for (let pageNumber = 1; pageNumber <= totalPages; pageNumber++) {
+        setRasterProgress((p) => ({ ...p, currentPage: pageNumber }));
+
+        const page = await pdf.getPage(pageNumber);
+
+        // Tune scale here (2.0 is a good balance for 50 pages)
+        const scale = 2.0;
+        const viewport = page.getViewport({ scale });
+
+        const canvas = document.createElement("canvas");
+        const ctx = canvas.getContext("2d");
+        if (!ctx) throw new Error("Cannot create canvas 2D context");
+
+        canvas.width = Math.max(1, Math.floor(viewport.width));
+        canvas.height = Math.max(1, Math.floor(viewport.height));
+
+        await page.render({ canvasContext: ctx, viewport }).promise;
+
+        const blob = await new Promise<Blob>((resolve, reject) => {
+          canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("toBlob returned null"))), "image/png");
+        });
+
+        const file = new File([blob], `page-${pageNumber}.png`, { type: "image/png" });
+
+        const form = new FormData();
+        form.append("file", file);
+        form.append("projectId", projectId);
+        form.append("manifestUrl", manifestUrl);
+        form.append("pageNumber", String(pageNumber));
+        form.append("width", String(canvas.width));
+        form.append("height", String(canvas.height));
+
+        const r = await fetch("/api/projects/pages/upload", { method: "POST", body: form });
+        if (!r.ok) throw new Error(`Upload page ${pageNumber} failed: ${await readErrorText(r)}`);
+
+        const j = (await r.json()) as { ok: boolean; manifestUrl?: string; error?: string };
+        if (!j.ok || !j.manifestUrl) throw new Error(j.error || `Upload page ${pageNumber} failed (bad response)`);
+
+        // Update manifestUrl as it evolves
+        setManifestUrl(j.manifestUrl);
+        setUrlParams(projectId, j.manifestUrl);
+
+        // Refresh manifest (cache-busted) so Cloud state is live
+        await loadManifest(j.manifestUrl);
+
+        setRasterProgress((p) => ({ ...p, uploaded: p.uploaded + 1 }));
+      }
+    } catch (e) {
+      setLastError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy("");
+      setRasterProgress((p) => ({ ...p, running: false }));
+    }
+  }
+
+  const pagesCount = manifest?.pages?.length ?? 0;
+
   return (
     <div style={{ minHeight: "100vh", padding: 28 }}>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 16 }}>
         <div>
           <div style={{ fontSize: 22, fontWeight: 800, letterSpacing: -0.3 }}>OTHERLY — Ingest</div>
           <div style={{ marginTop: 6, fontSize: 13, opacity: 0.75 }}>
-            Upload SOURCE → Process (Document AI) → store extracted text online
+            Step 6: Rasterize PDF → PNG pages → store online in Blob → update manifest
           </div>
         </div>
 
@@ -173,7 +271,23 @@ export default function Page() {
               opacity: manifest?.sourcePdf?.url && !busy ? 1 : 0.4
             }}
           >
-            Process
+            Process Text
+          </button>
+
+          <button
+            type="button"
+            disabled={!manifest?.sourcePdf?.url || !!busy || rasterProgress.running}
+            onClick={() => void rasterizeToPngs()}
+            style={{
+              border: "1px solid #000",
+              background: manifest?.sourcePdf?.url && !busy ? "#000" : "#fff",
+              color: manifest?.sourcePdf?.url && !busy ? "#fff" : "#000",
+              padding: "10px 12px",
+              borderRadius: 12,
+              opacity: manifest?.sourcePdf?.url && !busy ? 1 : 0.4
+            }}
+          >
+            Rasterize PNGs
           </button>
         </div>
       </div>
@@ -182,6 +296,13 @@ export default function Page() {
         <div style={{ marginTop: 18, border: "1px solid #000", borderRadius: 12, padding: 12 }}>
           <div style={{ fontWeight: 800 }}>Working</div>
           <div style={{ marginTop: 6, fontSize: 13, opacity: 0.8 }}>{busy}</div>
+
+          {rasterProgress.totalPages > 0 && (
+            <div style={{ marginTop: 10, fontSize: 13, opacity: 0.85 }}>
+              Raster: page {rasterProgress.currentPage}/{rasterProgress.totalPages} — uploaded {rasterProgress.uploaded}/
+              {rasterProgress.totalPages}
+            </div>
+          )}
         </div>
       )}
 
@@ -194,22 +315,49 @@ export default function Page() {
 
       <div style={{ marginTop: 18, borderTop: "1px solid rgba(0,0,0,0.2)" }} />
 
-      <div style={{ marginTop: 18, border: "1px solid #000", borderRadius: 12, padding: 14 }}>
-        <div style={{ fontWeight: 800 }}>Cloud state</div>
-
-        <div style={{ marginTop: 10, fontSize: 13 }}>
-          <div><span style={{ opacity: 0.7 }}>projectId:</span> {projectId || "—"}</div>
-          <div style={{ marginTop: 6 }}><span style={{ opacity: 0.7 }}>status:</span> {manifest?.status || "—"}</div>
-
-          <div style={{ marginTop: 10 }}><span style={{ opacity: 0.7 }}>manifestUrl:</span></div>
-          <div style={{ fontSize: 12, wordBreak: "break-all" }}>{manifestUrl || "—"}</div>
-
-          <div style={{ marginTop: 10 }}><span style={{ opacity: 0.7 }}>sourcePdf:</span></div>
-          <div style={{ fontSize: 12, wordBreak: "break-all" }}>{manifest?.sourcePdf?.url || "—"}</div>
-
-          <div style={{ marginTop: 10 }}><span style={{ opacity: 0.7 }}>extractedText:</span></div>
-          <div style={{ fontSize: 12, wordBreak: "break-all" }}>{manifest?.extractedText?.url || "—"}</div>
+      {/* Cloud state (always there) */}
+      <div style={{ marginTop: 18, border: "1px solid #000", borderRadius: 12 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: 14 }}>
+          <div style={{ fontWeight: 800 }}>Cloud state</div>
+          <button
+            type="button"
+            onClick={() => setCloudOpen((v) => !v)}
+            style={{ border: "1px solid #000", background: "#fff", padding: "6px 10px", borderRadius: 10 }}
+          >
+            {cloudOpen ? "Collapse" : "Expand"}
+          </button>
         </div>
+
+        {cloudOpen && (
+          <div style={{ padding: "0 14px 14px 14px", fontSize: 13 }}>
+            <div><span style={{ opacity: 0.7 }}>projectId:</span> {projectId || "—"}</div>
+            <div style={{ marginTop: 6 }}><span style={{ opacity: 0.7 }}>status:</span> {manifest?.status || "—"}</div>
+
+            <div style={{ marginTop: 10 }}><span style={{ opacity: 0.7 }}>manifestUrl:</span></div>
+            <div style={{ fontSize: 12, wordBreak: "break-all" }}>{manifestUrl || "—"}</div>
+
+            <div style={{ marginTop: 10 }}><span style={{ opacity: 0.7 }}>sourcePdf:</span></div>
+            <div style={{ fontSize: 12, wordBreak: "break-all" }}>{manifest?.sourcePdf?.url || "—"}</div>
+
+            <div style={{ marginTop: 10 }}><span style={{ opacity: 0.7 }}>extractedText:</span></div>
+            <div style={{ fontSize: 12, wordBreak: "break-all" }}>{manifest?.extractedText?.url || "—"}</div>
+
+            <div style={{ marginTop: 10 }}>
+              <span style={{ opacity: 0.7 }}>pages (PNGs):</span> {pagesCount}
+            </div>
+
+            {pagesCount > 0 && (
+              <div style={{ marginTop: 8 }}>
+                <div style={{ opacity: 0.7, marginBottom: 6 }}>First 3 page URLs:</div>
+                {(manifest?.pages ?? []).slice(0, 3).map((p) => (
+                  <div key={p.pageNumber} style={{ fontSize: 12, wordBreak: "break-all", marginBottom: 6 }}>
+                    p{p.pageNumber}: {p.url}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       <input
