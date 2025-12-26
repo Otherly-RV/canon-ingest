@@ -1146,6 +1146,19 @@ export default function Page() {
 
         {assetsOpen && (
           <div style={{ padding: "0 14px 14px 14px" }}>
+            {Array.isArray(manifest?.debugLog) && manifest.debugLog.length > 0 && (
+              <div style={{ marginBottom: 14, border: "1px solid #eee", borderRadius: 8, padding: 10, background: "#fafafa" }}>
+                <div style={{ fontWeight: 600, fontSize: 12, marginBottom: 6 }}>Recent Activity Log</div>
+                <div style={{ maxHeight: 150, overflowY: "auto" }}>
+                  {manifest.debugLog.map((line, i) => (
+                    <div key={i} style={{ fontSize: 11, fontFamily: "monospace", marginBottom: 3, color: "#444" }}>
+                      {line}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             <div style={{ fontSize: 13, opacity: 0.75, marginBottom: 10 }}>
               {taggedAssetsCount}/{totalAssetsCount}
             </div>
