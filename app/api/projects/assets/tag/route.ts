@@ -266,7 +266,7 @@ export async function POST(req: Request): Promise<Response> {
 
     const GEMINI_API_KEY = mustEnv("GEMINI_API_KEY");
     // Default to a modern model name; you can override via env
-    const GEMINI_MODEL = optEnv("GEMINI_MODEL", "gemini-2.0-flash");
+    const GEMINI_MODEL = optEnv("GEMINI_TAG_MODEL", optEnv("GEMINI_MODEL", "gemini-2.0-flash"));
 
     // NOTE: We will *not* save this manifest directly at the end.
     // Tagging can take time, and the user may delete assets while it's running.
