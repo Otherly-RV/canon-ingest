@@ -88,3 +88,26 @@ export async function saveManifest(manifest: ProjectManifest) {
   });
   return blob.url;
 }
+
+/**
+ * Force-fetch manifest bypassing Vercel Edge cache.
+ */
+export async function fetchManifestDirect(url: string): Promise<ProjectManifest> {
+  const u = new URL(url);
+  const cleanUrl = `${u.origin}${u.pathname}`;
+  const cacheBuster = `${cleanUrl}?v=${Date.now()}`;
+  
+  const res = await fetch(cacheBuster, { 
+    cache: "no-store",
+    headers: {
+      'Cache-Control': 'no-cache',
+      'Pragma': 'no-cache'
+    }
+  });
+
+  if (!res.ok) {
+    throw new Error(`Failed to read manifest directly: ${res.statusText}`);
+  }
+  
+  return (await res.json()) as ProjectManifest;
+}

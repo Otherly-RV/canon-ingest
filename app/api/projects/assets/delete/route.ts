@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { del, list } from "@vercel/blob";
-import { saveManifest, type ProjectManifest } from "@/app/lib/manifest";
+import { saveManifest, fetchManifestDirect, type ProjectManifest } from "@/app/lib/manifest";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -16,27 +16,6 @@ type ListResult = {
   blobs: Array<{ url: string; pathname?: string }>;
   cursor?: string | null;
 };
-
-function baseUrl(u: string) {
-  const url = new URL(u);
-  return `${url.origin}${url.pathname}`;
-}
-
-async function readErrorText(res: Response) {
-  try {
-    const t = await res.text();
-    return t || `${res.status} ${res.statusText}`;
-  } catch {
-    return `${res.status} ${res.statusText}`;
-  }
-}
-
-async function fetchManifest(manifestUrlRaw: string): Promise<ProjectManifest> {
-  const url = baseUrl(manifestUrlRaw);
-  const res = await fetch(`${url}?v=${Date.now()}`, { cache: "no-store" });
-  if (!res.ok) throw new Error(`Cannot fetch manifest (${res.status}): ${await readErrorText(res)}`);
-  return (await res.json()) as ProjectManifest;
-}
 
 export async function POST(req: Request): Promise<Response> {
   try {
@@ -59,7 +38,8 @@ export async function POST(req: Request): Promise<Response> {
       );
     }
 
-    const manifest = await fetchManifest(manifestUrl);
+    // Use direct fetch to avoid cache
+    const manifest = await fetchManifestDirect(manifestUrl);
     if (manifest.projectId !== projectId) {
       return NextResponse.json({ ok: false, error: "projectId does not match manifest" }, { status: 400 });
     }
@@ -100,25 +80,38 @@ export async function POST(req: Request): Promise<Response> {
     if (uniqUrls.length > 0) await del(uniqUrls);
 
     // Re-fetch latest manifest to avoid race conditions
-    const latest = await fetchManifest(manifestUrl);
+    const latest = await fetchManifestDirect(manifestUrl);
     if (latest.projectId !== projectId) {
       throw new Error("projectId does not match manifest on re-fetch");
-    }
-
-    // Remove from manifest + tombstone it (prevents later background saves from resurrecting it)
-    if (Array.isArray(latest.pages)) {
-      const p = latest.pages.find((x) => x.pageNumber === pageNumber);
-      if (p) {
-        if (Array.isArray(p.assets)) p.assets = p.assets.filter((a) => a.assetId !== assetId);
-        if (!Array.isArray(p.deletedAssetIds)) p.deletedAssetIds = [];
-        if (!p.deletedAssetIds.includes(assetId)) p.deletedAssetIds.push(assetId);
-      }
     }
 
     // Add debug log
     if (!Array.isArray(latest.debugLog)) latest.debugLog = [];
     const timestamp = new Date().toISOString();
-    latest.debugLog.unshift(`[${timestamp}] DELETE asset ${assetId} (page ${pageNumber}). Removed ${uniqUrls.length} blobs.`);
+    
+    // Remove from manifest + tombstone it (prevents later background saves from resurrecting it)
+    let foundPage = false;
+    let foundAsset = false;
+    let tombstoneAdded = false;
+
+    if (Array.isArray(latest.pages)) {
+      const p = latest.pages.find((x) => x.pageNumber === pageNumber);
+      if (p) {
+        foundPage = true;
+        if (Array.isArray(p.assets)) {
+           const initialLen = p.assets.length;
+           p.assets = p.assets.filter((a) => a.assetId !== assetId);
+           if (p.assets.length < initialLen) foundAsset = true;
+        }
+        if (!Array.isArray(p.deletedAssetIds)) p.deletedAssetIds = [];
+        if (!p.deletedAssetIds.includes(assetId)) {
+          p.deletedAssetIds.push(assetId);
+          tombstoneAdded = true;
+        }
+      }
+    }
+
+    latest.debugLog.unshift(`[${timestamp}] DELETE ${assetId} (p${pageNumber}). Blobs: ${uniqUrls.length}. PageFound: ${foundPage}. AssetFound: ${foundAsset}. Tombstone: ${tombstoneAdded}.`);
     // Keep log size manageable
     if (latest.debugLog.length > 50) latest.debugLog = latest.debugLog.slice(0, 50);
 
