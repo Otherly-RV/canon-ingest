@@ -235,6 +235,19 @@ export default function Page() {
   const [assetsOpen, setAssetsOpen] = useState(true);
   const [deletingAssets, setDeletingAssets] = useState<Record<string, boolean>>({});
 
+  const [textPanelOpen, setTextPanelOpen] = useState(false);
+  const [extractedText, setExtractedText] = useState<string>("");
+  const [formattedText, setFormattedText] = useState<string>("");
+  const [textLoading, setTextLoading] = useState(false);
+
+  const [debugLogOpen, setDebugLogOpen] = useState(false);
+  const [debugLog, setDebugLog] = useState<string[]>([]);
+
+  function log(msg: string) {
+    const ts = new Date().toLocaleTimeString();
+    setDebugLog((prev) => [...prev.slice(-99), `[${ts}] ${msg}`]);
+  }
+
   async function loadManifest(url: string) {
     const mRes = await fetch("/api/projects/manifest/read", {
       method: "POST",
@@ -344,6 +357,7 @@ export default function Page() {
     if (busy) return;
 
     setBusy("Processing...");
+    log("Starting DocAI processing...");
 
     try {
       const r = await fetch("/api/projects/process", {
@@ -357,11 +371,16 @@ export default function Page() {
       const j = (await r.json()) as { ok: boolean; manifestUrl?: string; error?: string };
       if (!j.ok || !j.manifestUrl) throw new Error(j.error || "Process failed (bad response)");
 
+      log("DocAI processing complete");
       setManifestUrl(j.manifestUrl);
       setUrlParams(projectId, j.manifestUrl);
 
       await loadManifest(j.manifestUrl);
       await refreshProjects();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      log(`Process error: ${msg}`);
+      setLastError(msg);
     } finally {
       setBusy("");
     }
@@ -674,6 +693,53 @@ export default function Page() {
     }
   }
 
+  async function loadExtractedText() {
+    if (!manifest?.extractedText?.url) {
+      setLastError("No extracted text available. Run 'Process Text' first.");
+      return;
+    }
+
+    setTextLoading(true);
+    log("Loading extracted text...");
+
+    try {
+      const res = await fetch(manifest.extractedText.url);
+      if (!res.ok) throw new Error(`Failed to fetch text: ${res.status}`);
+      const raw = await res.text();
+      setExtractedText(raw);
+      log(`Loaded ${raw.length} chars of extracted text`);
+
+      // Now format with Gemini
+      log("Formatting with Gemini...");
+      const fRes = await fetch("/api/projects/format-text", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: raw })
+      });
+
+      if (!fRes.ok) {
+        log("Gemini formatting failed, showing raw text");
+        setFormattedText(raw);
+      } else {
+        const fj = (await fRes.json()) as { ok: boolean; formatted?: string; error?: string };
+        if (fj.ok && fj.formatted) {
+          setFormattedText(fj.formatted);
+          log("Text formatted successfully");
+        } else {
+          log(fj.error || "Format failed, showing raw");
+          setFormattedText(raw);
+        }
+      }
+
+      setTextPanelOpen(true);
+    } catch (e) {
+      setLastError(e instanceof Error ? e.message : String(e));
+      log(`Error: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setTextLoading(false);
+    }
+  }
+
   async function deleteAsset(pageNumber: number, assetId: string) {
     if (!projectId || !manifestUrl) return;
 
@@ -859,6 +925,22 @@ export default function Page() {
 
           <button
             type="button"
+            disabled={!manifest?.extractedText?.url || !!busy || textLoading}
+            onClick={() => void loadExtractedText()}
+            style={{
+              border: "1px solid #000",
+              background: manifest?.extractedText?.url && !busy ? "#000" : "#fff",
+              color: manifest?.extractedText?.url && !busy ? "#fff" : "#000",
+              padding: "10px 12px",
+              borderRadius: 12,
+              opacity: manifest?.extractedText?.url && !busy ? 1 : 0.4
+            }}
+          >
+            {textLoading ? "Loading..." : "View Text"}
+          </button>
+
+          <button
+            type="button"
             disabled={!manifest?.sourcePdf?.url || !!busy || rasterProgress.running}
             onClick={() => void rasterizeToPngs()}
             style={{
@@ -932,6 +1014,116 @@ export default function Page() {
           <div style={{ marginTop: 6, fontSize: 13, whiteSpace: "pre-wrap" }}>{lastError}</div>
         </div>
       )}
+
+      {/* Text Panel */}
+      <div style={{ marginTop: 18, border: "1px solid #000", borderRadius: 12 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: 14 }}>
+          <div style={{ fontWeight: 800 }}>Extracted Text</div>
+          <button
+            type="button"
+            aria-label={textPanelOpen ? "Collapse text" : "Expand text"}
+            onClick={() => setTextPanelOpen((v) => !v)}
+            style={{
+              border: "1px solid #000",
+              background: "#fff",
+              width: 36,
+              height: 30,
+              borderRadius: 10,
+              display: "grid",
+              placeItems: "center"
+            }}
+          >
+            <Chevron up={textPanelOpen} />
+          </button>
+        </div>
+
+        {textPanelOpen && (
+          <div style={{ padding: "0 14px 14px 14px" }}>
+            {formattedText ? (
+              <div
+                style={{
+                  fontSize: 13,
+                  lineHeight: 1.6,
+                  whiteSpace: "pre-wrap",
+                  maxHeight: 400,
+                  overflow: "auto",
+                  background: "#f9f9f9",
+                  padding: 12,
+                  borderRadius: 8,
+                  border: "1px solid #ddd"
+                }}
+              >
+                {formattedText}
+              </div>
+            ) : (
+              <div style={{ fontSize: 13, opacity: 0.6 }}>
+                Click &quot;View Text&quot; to load and format extracted text.
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Debug Log Panel */}
+      <div style={{ marginTop: 18, border: "1px solid #000", borderRadius: 12 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: 14 }}>
+          <div style={{ fontWeight: 800 }}>Debug Log ({debugLog.length})</div>
+          <button
+            type="button"
+            aria-label={debugLogOpen ? "Collapse log" : "Expand log"}
+            onClick={() => setDebugLogOpen((v) => !v)}
+            style={{
+              border: "1px solid #000",
+              background: "#fff",
+              width: 36,
+              height: 30,
+              borderRadius: 10,
+              display: "grid",
+              placeItems: "center"
+            }}
+          >
+            <Chevron up={debugLogOpen} />
+          </button>
+        </div>
+
+        {debugLogOpen && (
+          <div style={{ padding: "0 14px 14px 14px" }}>
+            {debugLog.length > 0 ? (
+              <div
+                style={{
+                  fontSize: 11,
+                  fontFamily: "monospace",
+                  whiteSpace: "pre-wrap",
+                  maxHeight: 200,
+                  overflow: "auto",
+                  background: "#1a1a1a",
+                  color: "#0f0",
+                  padding: 10,
+                  borderRadius: 6
+                }}
+              >
+                {debugLog.join("\n")}
+              </div>
+            ) : (
+              <div style={{ fontSize: 13, opacity: 0.6 }}>No log entries yet.</div>
+            )}
+            <button
+              type="button"
+              onClick={() => setDebugLog([])}
+              style={{
+                marginTop: 8,
+                border: "1px solid #000",
+                background: "#fff",
+                padding: "6px 10px",
+                borderRadius: 8,
+                fontSize: 12
+              }}
+            >
+              Clear Log
+            </button>
+          </div>
+        )}
+      </div>
 
       <div style={{ marginTop: 18, borderTop: "1px solid rgba(0,0,0,0.2)" }} />
 
