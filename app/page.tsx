@@ -34,7 +34,6 @@ type Manifest = {
     uiFieldsJson: string;
     taggingJson: string;
   };
-  debugLog?: string[];
 };
 
 type ProjectRow = {
@@ -198,7 +197,6 @@ function Tabs({
 
 export default function Page() {
   const fileRef = useRef<HTMLInputElement>(null);
-  const deletingRef = useRef<Set<string>>(new Set());
 
   const [busy, setBusy] = useState("");
   const [projectId, setProjectId] = useState<string>("");
@@ -216,8 +214,6 @@ export default function Page() {
   const [settingsTab, setSettingsTab] = useState<"ai" | "tagging">("ai");
   const [settingsBusy, setSettingsBusy] = useState(false);
   const [settingsError, setSettingsError] = useState<string>("");
-
-  const [activityLogOpen, setActivityLogOpen] = useState(true);
 
   const [aiRulesDraft, setAiRulesDraft] = useState<string>("");
   const [taggingJsonDraft, setTaggingJsonDraft] = useState<string>("");
@@ -242,12 +238,8 @@ export default function Page() {
   async function loadManifest(url: string) {
     const mRes = await fetch("/api/projects/manifest/read", {
       method: "POST",
-      headers: { 
-        "Content-Type": "application/json",
-        "Cache-Control": "no-cache"
-      },
-      body: JSON.stringify({ manifestUrl: url }),
-      cache: "no-store"
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ manifestUrl: url })
     });
 
     if (!mRes.ok) throw new Error(`Failed to read manifest: ${await readErrorText(mRes)}`);
@@ -309,7 +301,8 @@ export default function Page() {
     setBusy("Uploading SOURCE...");
 
     try {
-      const p = projectId && manifestUrl ? { projectId, manifestUrl } : await createProject();
+      // Always create a new project for each upload
+      const p = await createProject();
 
       const form = new FormData();
       form.append("file", file);
@@ -458,19 +451,19 @@ export default function Page() {
     await loadManifest(j.manifestUrl);
   }
 
-  async function splitImages(options?: { detectPath?: string; busyLabel?: string }) {
+  async function splitImages() {
     setLastError("");
 
     if (!projectId || !manifestUrl) return setLastError("Missing projectId/manifestUrl");
-    if (!manifest?.pages?.length) return setLastError("No page PNGs");
+    if (!manifest?.docAiJson?.url) return setLastError("No DocAI JSON");
+    if (!manifest.pages?.length) return setLastError("No page PNGs");
     if (busy || splitProgress.running) return;
 
-    const detectPath = options?.detectPath || "/api/projects/assets/detect";
-    setBusy(options?.busyLabel || "Splitting...");
-    setSplitProgress({ running: true, page: 0, totalPages: manifest?.pages?.length ?? 0, assetsUploaded: 0 });
+    setBusy("Splitting...");
+    setSplitProgress({ running: true, page: 0, totalPages: manifest.pages.length, assetsUploaded: 0 });
 
     try {
-      const detectRes = await fetch(detectPath, {
+      const detectRes = await fetch("/api/projects/assets/detect", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ projectId, manifestUrl })
@@ -491,7 +484,7 @@ export default function Page() {
         byPage.set(p.pageNumber, Array.isArray(p.boxes) ? p.boxes : []);
       }
 
-      const pages = manifest?.pages ?? [];
+      const pages = manifest.pages;
 
       for (const page of pages) {
         setSplitProgress((s) => ({ ...s, page: page.pageNumber }));
@@ -549,37 +542,6 @@ export default function Page() {
     } finally {
       setBusy("");
       setSplitProgress((s) => ({ ...s, running: false }));
-    }
-  }
-
-  async function tagImages() {
-    setLastError("");
-    if (!projectId || !manifestUrl) return setLastError("Missing projectId/manifestUrl");
-    if (busy) return;
-
-    setBusy("Tagging images (AI)...");
-    try {
-      const r = await fetch("/api/projects/assets/tag", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectId, manifestUrl })
-      });
-
-      if (!r.ok) throw new Error(await readErrorText(r));
-
-      const j = (await r.json()) as { ok: boolean; manifestUrl?: string; error?: string; tagged?: number };
-      if (!j.ok || !j.manifestUrl) throw new Error(j.error || "Tagging failed (bad response)");
-
-      setManifestUrl(j.manifestUrl);
-      setUrlParams(projectId, j.manifestUrl);
-      
-      // Wait for CDN to propagate, then reload with retry
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-      await loadManifest(j.manifestUrl);
-    } catch (e) {
-      setLastError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy("");
     }
   }
 
@@ -700,15 +662,11 @@ export default function Page() {
     if (!projectId || !manifestUrl) return;
 
     const key = `${pageNumber}-${assetId}`;
-    
-    // Use ref to prevent duplicate calls (state can be stale in closures)
-    if (deletingRef.current.has(key)) return;
-    deletingRef.current.add(key);
+    if (deletingAssets[key]) return;
 
     setDeletingAssets((m) => ({ ...m, [key]: true }));
     setLastError("");
 
-    // Optimistic update: immediately remove from UI
     setManifest((prev) => {
       if (!prev?.pages) return prev;
       return {
@@ -733,17 +691,14 @@ export default function Page() {
       const j = (await r.json().catch(() => null)) as { ok?: boolean; manifestUrl?: string; error?: string } | null;
       if (!r.ok || !j?.ok || !j.manifestUrl) throw new Error(j?.error || `Delete failed (${r.status})`);
 
-      // Update URL but DO NOT re-fetch - trust the optimistic update
-      // Re-fetching often returns stale CDN data that resurrects the deleted asset
       setManifestUrl(j.manifestUrl);
       setUrlParams(projectId, j.manifestUrl);
+      await loadManifest(j.manifestUrl);
+      await refreshProjects();
     } catch (e) {
       setLastError(e instanceof Error ? e.message : String(e));
-      // On error, reload to get true state
-      await new Promise((resolve) => setTimeout(resolve, 500));
       await loadManifest(manifestUrl);
     } finally {
-      deletingRef.current.delete(key);
       setDeletingAssets((m) => {
         const copy = { ...m };
         delete copy[key];
@@ -920,38 +875,6 @@ export default function Page() {
 
           <button
             type="button"
-            disabled={!manifest?.pages?.length || !!busy || splitProgress.running}
-            onClick={() => void splitImages({ detectPath: "/api/projects/assets/detect-gemini", busyLabel: "Splitting (Gemini)..." })}
-            style={{
-              border: "1px solid #000",
-              background: manifest?.pages?.length && !busy ? "#000" : "#fff",
-              color: manifest?.pages?.length && !busy ? "#fff" : "#000",
-              padding: "10px 12px",
-              borderRadius: 12,
-              opacity: manifest?.pages?.length && !busy ? 1 : 0.4
-            }}
-          >
-            Split (Gemini)
-          </button>
-
-          <button
-            type="button"
-            disabled={!manifest?.pages?.length || !!busy}
-            onClick={() => void tagImages()}
-            style={{
-              border: "1px solid #000",
-              background: manifest?.pages?.length && !busy ? "#000" : "#fff",
-              color: manifest?.pages?.length && !busy ? "#fff" : "#000",
-              padding: "10px 12px",
-              borderRadius: 12,
-              opacity: manifest?.pages?.length && !busy ? 1 : 0.4
-            }}
-          >
-            Tag Images
-          </button>
-
-          <button
-            type="button"
             disabled={!manifestUrl || !projectId || !!busy}
             onClick={() => void rebuildAssets()}
             style={{
@@ -1019,119 +942,70 @@ export default function Page() {
 
         {settingsOpen && (
           <div style={{ padding: "0 14px 14px 14px" }}>
-            <div
-              style={{
-                marginTop: 8,
-                border: "1px solid #000",
-                borderRadius: 12,
-                padding: 12,
-                background: "#fff"
-              }}
-            >
-              <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <Tabs value={settingsTab} onChange={setSettingsTab} />
-                </div>
-
-                <button
-                  type="button"
-                  disabled={settingsBusy || !projectId || !manifestUrl}
-                  onClick={() => void saveSettings()}
-                  style={{
-                    border: "1px solid #000",
-                    background: "#000",
-                    color: "#fff",
-                    padding: "8px 10px",
-                    borderRadius: 10,
-                    opacity: settingsBusy || !projectId || !manifestUrl ? 0.5 : 1,
-                    cursor: settingsBusy || !projectId || !manifestUrl ? "not-allowed" : "pointer",
-                    fontSize: 13,
-                    fontWeight: 800,
-                    whiteSpace: "nowrap"
-                  }}
-                >
-                  {settingsBusy ? "Saving..." : "Save"}
-                </button>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <Tabs value={settingsTab} onChange={setSettingsTab} />
               </div>
 
-              {settingsError && (
-                <div style={{ marginTop: 10, border: "1px solid #000", borderRadius: 12, padding: 10 }}>
-                  <div style={{ fontWeight: 800, fontSize: 13 }}>Error</div>
-                  <div style={{ marginTop: 6, fontSize: 13, whiteSpace: "pre-wrap" }}>{settingsError}</div>
-                </div>
-              )}
-
-              <div style={{ marginTop: 12 }}>
-                {settingsTab === "ai" ? (
-                  <textarea
-                    value={aiRulesDraft}
-                    onChange={(e) => setAiRulesDraft(e.target.value)}
-                    style={{
-                      width: "100%",
-                      minHeight: 180,
-                      border: "1px solid rgba(0,0,0,0.35)",
-                      borderRadius: 12,
-                      padding: 12,
-                      fontSize: 13,
-                      fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
-                    }}
-                  />
-                ) : (
-                  <textarea
-                    value={taggingJsonDraft}
-                    onChange={(e) => setTaggingJsonDraft(e.target.value)}
-                    style={{
-                      width: "100%",
-                      minHeight: 180,
-                      border: "1px solid rgba(0,0,0,0.35)",
-                      borderRadius: 12,
-                      padding: 12,
-                      fontSize: 13,
-                      fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
-                    }}
-                  />
-                )}
-              </div>
+              <button
+                type="button"
+                disabled={settingsBusy || !projectId || !manifestUrl}
+                onClick={() => void saveSettings()}
+                style={{
+                  border: "1px solid #000",
+                  background: "#000",
+                  color: "#fff",
+                  padding: "8px 10px",
+                  borderRadius: 10,
+                  opacity: settingsBusy || !projectId || !manifestUrl ? 0.5 : 1,
+                  cursor: settingsBusy || !projectId || !manifestUrl ? "not-allowed" : "pointer",
+                  fontSize: 13,
+                  fontWeight: 800,
+                  whiteSpace: "nowrap"
+                }}
+              >
+                {settingsBusy ? "Saving..." : "Save"}
+              </button>
             </div>
-          </div>
-        )}
-      </div>
 
-      <div style={{ marginTop: 18, border: "1px solid #000", borderRadius: 12 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: 14 }}>
-          <div style={{ fontWeight: 800 }}>Activity Log</div>
-
-          <button
-            type="button"
-            aria-label={activityLogOpen ? "Collapse activity log" : "Expand activity log"}
-            onClick={() => setActivityLogOpen((v) => !v)}
-            style={{
-              border: "1px solid #000",
-              background: "#fff",
-              width: 36,
-              height: 30,
-              borderRadius: 10,
-              display: "grid",
-              placeItems: "center"
-            }}
-          >
-            <Chevron up={activityLogOpen} />
-          </button>
-        </div>
-
-        {activityLogOpen && (
-          <div style={{ padding: "0 14px 14px 14px" }}>
-            {Array.isArray(manifest?.debugLog) && manifest.debugLog.length > 0 ? (
-              <div style={{ maxHeight: 200, overflowY: "auto", background: "#fafafa", padding: 10, borderRadius: 8, border: "1px solid #eee" }}>
-                {manifest.debugLog.map((line, i) => (
-                  <div key={i} style={{ fontSize: 11, fontFamily: "monospace", marginBottom: 3, color: "#444" }}>
-                    {line}
-                  </div>
-                ))}
+            {settingsError && (
+              <div style={{ marginTop: 10, border: "1px solid #000", borderRadius: 12, padding: 10 }}>
+                <div style={{ fontWeight: 800, fontSize: 13 }}>Error</div>
+                <div style={{ marginTop: 6, fontSize: 13, whiteSpace: "pre-wrap" }}>{settingsError}</div>
               </div>
-            ) : (
-              <div style={{ fontSize: 13, opacity: 0.7 }}>No activity recorded.</div>
             )}
+
+            <div style={{ marginTop: 12 }}>
+              {settingsTab === "ai" ? (
+                <textarea
+                  value={aiRulesDraft}
+                  onChange={(e) => setAiRulesDraft(e.target.value)}
+                  style={{
+                    width: "100%",
+                    minHeight: 180,
+                    border: "1px solid rgba(0,0,0,0.35)",
+                    borderRadius: 12,
+                    padding: 12,
+                    fontSize: 13,
+                    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
+                  }}
+                />
+              ) : (
+                <textarea
+                  value={taggingJsonDraft}
+                  onChange={(e) => setTaggingJsonDraft(e.target.value)}
+                  style={{
+                    width: "100%",
+                    minHeight: 180,
+                    border: "1px solid rgba(0,0,0,0.35)",
+                    borderRadius: 12,
+                    padding: 12,
+                    fontSize: 13,
+                    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
+                  }}
+                />
+              )}
+            </div>
           </div>
         )}
       </div>
