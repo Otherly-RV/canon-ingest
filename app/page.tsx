@@ -412,6 +412,7 @@ export default function Page() {
 
     setBusy("Rasterizing...");
     setRasterProgress({ running: true, currentPage: 0, totalPages: 0, uploaded: 0 });
+    log("Starting rasterization...");
 
     try {
       const pdfjsImport = (await import("pdfjs-dist")) as unknown as PdfJsLib;
@@ -422,9 +423,10 @@ export default function Page() {
 
       const totalPages = Number(pdf.numPages) || 0;
       setRasterProgress((p) => ({ ...p, totalPages }));
+      log(`PDF has ${totalPages} pages`);
 
-      // Track manifestUrl through the loop to avoid race conditions
-      let currentManifestUrl = manifestUrl;
+      // Collect all page data first, then save in one batch at the end
+      const allPages: Array<{ pageNumber: number; url: string; width: number; height: number }> = [];
 
       for (let pageNumber = 1; pageNumber <= totalPages; pageNumber++) {
         setRasterProgress((p) => ({ ...p, currentPage: pageNumber }));
@@ -453,16 +455,42 @@ export default function Page() {
           handleUploadUrl: "/api/blob"
         });
 
-        currentManifestUrl = await recordPage(pageNumber, blob.url, canvas.width, canvas.height, currentManifestUrl);
+        // Collect page data instead of saving one by one
+        allPages.push({
+          pageNumber,
+          url: blob.url,
+          width: canvas.width,
+          height: canvas.height
+        });
 
         setRasterProgress((p) => ({ ...p, uploaded: p.uploaded + 1 }));
+        log(`Uploaded page ${pageNumber}/${totalPages}`);
       }
 
+      // Now save all pages in one bulk operation to avoid race conditions
+      log(`Saving ${allPages.length} pages to manifest...`);
+      const r = await fetch("/api/projects/pages/record-bulk", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId, manifestUrl, pages: allPages })
+      });
+
+      if (!r.ok) throw new Error(await readErrorText(r));
+
+      const j = (await r.json()) as { ok: boolean; manifestUrl?: string; error?: string };
+      if (!j.ok || !j.manifestUrl) throw new Error(j.error || "Record bulk pages failed");
+
+      log(`All ${allPages.length} pages saved successfully`);
+      setManifestUrl(j.manifestUrl);
+      setUrlParams(projectId, j.manifestUrl);
+
       // Load final manifest at the end
-      await loadManifest(currentManifestUrl);
+      await loadManifest(j.manifestUrl);
       await refreshProjects();
     } catch (e) {
-      setLastError(e instanceof Error ? e.message : String(e));
+      const msg = e instanceof Error ? e.message : String(e);
+      log(`Rasterization error: ${msg}`);
+      setLastError(msg);
     } finally {
       setBusy("");
       setRasterProgress((p) => ({ ...p, running: false }));
@@ -601,6 +629,43 @@ export default function Page() {
       await refreshProjects();
     } catch (e) {
       setLastError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function restoreFromBlob() {
+    setLastError("");
+    if (!projectId || !manifestUrl) return;
+
+    setBusy("Restoring from blob storage...");
+    log("Starting restore from blob storage...");
+    try {
+      const r = await fetch("/api/projects/restore", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId, manifestUrl })
+      });
+
+      const j = (await r.json()) as { 
+        ok: boolean; 
+        manifestUrl?: string; 
+        error?: string;
+        pagesFound?: number;
+        assetsFound?: number;
+        pagesInManifest?: number;
+      };
+      if (!r.ok || !j.ok || !j.manifestUrl) throw new Error(j.error || `Restore failed (${r.status})`);
+
+      log(`Restore complete: ${j.pagesFound} page blobs, ${j.assetsFound} asset blobs, ${j.pagesInManifest} pages in manifest`);
+      setManifestUrl(j.manifestUrl);
+      setUrlParams(projectId, j.manifestUrl);
+      await loadManifest(j.manifestUrl);
+      await refreshProjects();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      log(`Restore error: ${msg}`);
+      setLastError(msg);
     } finally {
       setBusy("");
     }
@@ -984,6 +1049,21 @@ export default function Page() {
             }}
           >
             Rebuild assets
+          </button>
+
+          <button
+            type="button"
+            disabled={!manifestUrl || !projectId || !!busy}
+            onClick={() => void restoreFromBlob()}
+            style={{
+              border: "1px solid #000",
+              background: "#fff",
+              padding: "10px 12px",
+              borderRadius: 12,
+              opacity: !manifestUrl || !projectId || busy ? 0.4 : 1
+            }}
+          >
+            Restore
           </button>
         </div>
       </div>
