@@ -21,6 +21,7 @@ type Manifest = {
   extractedText?: { url: string };
   formattedText?: { url: string };
   docAiJson?: { url: string };
+  schemaResults?: { url: string };
   pages?: Array<{
     pageNumber: number;
     url: string;
@@ -256,6 +257,13 @@ export default function Page() {
   const [debugLogOpen, setDebugLogOpen] = useState(false);
   const [debugLog, setDebugLog] = useState<string[]>([]);
 
+  // Schema filling state
+  const [schemaResultsOpen, setSchemaResultsOpen] = useState(false);
+  const [schemaResults, setSchemaResults] = useState<string>("");
+  const [schemaResultsDraft, setSchemaResultsDraft] = useState<string>("");
+  const [schemaFillBusy, setSchemaFillBusy] = useState(false);
+  const [schemaSaveBusy, setSchemaSaveBusy] = useState(false);
+
   function log(msg: string) {
     const ts = new Date().toLocaleTimeString();
     setDebugLog((prev) => [...prev.slice(-99), `[${ts}] ${msg}`]);
@@ -303,6 +311,23 @@ export default function Page() {
       } catch {
         // Ignore errors loading extracted text
       }
+    }
+
+    // Load cached schema results if available
+    if (m.schemaResults?.url) {
+      try {
+        const res = await fetch(m.schemaResults.url);
+        if (res.ok) {
+          const text = await res.text();
+          setSchemaResults(text);
+          setSchemaResultsDraft(text);
+        }
+      } catch {
+        // Ignore errors loading schema results
+      }
+    } else {
+      setSchemaResults("");
+      setSchemaResultsDraft("");
     }
 
     return m;
@@ -774,6 +799,78 @@ export default function Page() {
     }
   }
 
+  async function fillSchema() {
+    setLastError("");
+    if (!projectId || !manifestUrl) return;
+
+    setSchemaFillBusy(true);
+    setBusy("Filling schema with AI...");
+    log("Starting schema fill...");
+
+    try {
+      const r = await fetch("/api/projects/schema/fill", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId, manifestUrl })
+      });
+
+      const j = (await r.json()) as {
+        ok: boolean;
+        results?: string;
+        error?: string;
+      };
+
+      if (!r.ok || !j.ok || !j.results) throw new Error(j.error || `Schema fill failed (${r.status})`);
+
+      log("Schema fill complete");
+      setSchemaResultsDraft(j.results);
+      setSchemaResultsOpen(true);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      log(`Schema fill error: ${msg}`);
+      setLastError(msg);
+    } finally {
+      setBusy("");
+      setSchemaFillBusy(false);
+    }
+  }
+
+  async function saveSchemaResults() {
+    setLastError("");
+    if (!projectId || !manifestUrl) return;
+
+    setSchemaSaveBusy(true);
+    log("Saving schema results...");
+
+    try {
+      const r = await fetch("/api/projects/schema/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId, manifestUrl, results: schemaResultsDraft })
+      });
+
+      const j = (await r.json()) as {
+        ok: boolean;
+        manifestUrl?: string;
+        error?: string;
+      };
+
+      if (!r.ok || !j.ok || !j.manifestUrl) throw new Error(j.error || `Schema save failed (${r.status})`);
+
+      log("Schema results saved");
+      setSchemaResults(schemaResultsDraft);
+      setManifestUrl(j.manifestUrl);
+      setUrlParams(projectId, j.manifestUrl);
+      await loadManifest(j.manifestUrl);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      log(`Schema save error: ${msg}`);
+      setLastError(msg);
+    } finally {
+      setSchemaSaveBusy(false);
+    }
+  }
+
   async function deleteProject(targetProjectId: string) {
     const ok = window.confirm(`Delete project ${targetProjectId}?`);
     if (!ok) return;
@@ -1190,6 +1287,22 @@ export default function Page() {
           }}
         >
           6. Tag Assets
+        </button>
+
+        <button
+          type="button"
+          disabled={!manifestUrl || !!busy || schemaFillBusy}
+          onClick={() => void fillSchema()}
+          style={{
+            border: "1px solid #000",
+            background: manifestUrl && !busy && !schemaFillBusy ? "#000" : "#fff",
+            color: manifestUrl && !busy && !schemaFillBusy ? "#fff" : "#000",
+            padding: "10px 12px",
+            borderRadius: 12,
+            opacity: manifestUrl && !busy && !schemaFillBusy ? 1 : 0.4
+          }}
+        >
+          7. Fill Schema
         </button>
       </div>
 
@@ -1662,6 +1775,96 @@ export default function Page() {
                     </div>
                   );
                 })}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Schema Results Panel */}
+      <div style={{ marginTop: 18, border: "1px solid #000", borderRadius: 12 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: 14 }}>
+          <div style={{ fontWeight: 800 }}>
+            Schema Results
+            {schemaResultsDraft && schemaResultsDraft !== schemaResults && (
+              <span style={{ marginLeft: 8, fontSize: 12, color: "#c60", fontWeight: 400 }}>(unsaved)</span>
+            )}
+          </div>
+
+          <button
+            type="button"
+            aria-label={schemaResultsOpen ? "Collapse schema results" : "Expand schema results"}
+            onClick={() => setSchemaResultsOpen((v) => !v)}
+            style={{
+              border: "1px solid #000",
+              background: "#fff",
+              width: 36,
+              height: 30,
+              borderRadius: 10,
+              display: "grid",
+              placeItems: "center"
+            }}
+          >
+            <Chevron up={schemaResultsOpen} />
+          </button>
+        </div>
+
+        {schemaResultsOpen && (
+          <div style={{ padding: "0 14px 14px 14px" }}>
+            {schemaResultsDraft ? (
+              <>
+                <textarea
+                  value={schemaResultsDraft}
+                  onChange={(e) => setSchemaResultsDraft(e.target.value)}
+                  style={{
+                    width: "100%",
+                    minHeight: 300,
+                    fontFamily: "monospace",
+                    fontSize: 12,
+                    padding: 10,
+                    border: "1px solid #ccc",
+                    borderRadius: 6,
+                    resize: "vertical",
+                    boxSizing: "border-box",
+                    display: "block",
+                    maxWidth: "100%"
+                  }}
+                />
+                <div style={{ marginTop: 10, display: "flex", gap: 10 }}>
+                  <button
+                    type="button"
+                    disabled={schemaSaveBusy || schemaResultsDraft === schemaResults}
+                    onClick={() => void saveSchemaResults()}
+                    style={{
+                      border: "1px solid #000",
+                      background: schemaResultsDraft !== schemaResults ? "#000" : "#fff",
+                      color: schemaResultsDraft !== schemaResults ? "#fff" : "#000",
+                      padding: "8px 16px",
+                      borderRadius: 8,
+                      opacity: schemaSaveBusy || schemaResultsDraft === schemaResults ? 0.4 : 1
+                    }}
+                  >
+                    {schemaSaveBusy ? "Saving..." : "Save Results"}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={schemaResultsDraft === schemaResults}
+                    onClick={() => setSchemaResultsDraft(schemaResults)}
+                    style={{
+                      border: "1px solid #000",
+                      background: "#fff",
+                      padding: "8px 16px",
+                      borderRadius: 8,
+                      opacity: schemaResultsDraft === schemaResults ? 0.4 : 1
+                    }}
+                  >
+                    Revert
+                  </button>
+                </div>
+              </>
+            ) : (
+              <div style={{ fontSize: 13, opacity: 0.7 }}>
+                No schema results yet. Click &quot;7. Fill Schema&quot; to generate.
               </div>
             )}
           </div>
