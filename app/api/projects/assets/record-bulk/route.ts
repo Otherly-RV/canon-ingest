@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { saveManifest, type ProjectManifest, type PageAsset, type AssetBBox } from "@/app/lib/manifest";
+import { saveManifest, fetchManifestDirect, type ProjectManifest, type PageAsset, type AssetBBox } from "@/app/lib/manifest";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -15,27 +15,6 @@ type Body = {
     tags?: string[];
   }>;
 };
-
-function baseUrl(u: string) {
-  const url = new URL(u);
-  return `${url.origin}${url.pathname}`;
-}
-
-async function readErrorText(res: Response) {
-  try {
-    const t = await res.text();
-    return t || `${res.status} ${res.statusText}`;
-  } catch {
-    return `${res.status} ${res.statusText}`;
-  }
-}
-
-async function fetchManifest(manifestUrlRaw: string): Promise<ProjectManifest> {
-  const url = `${baseUrl(manifestUrlRaw)}?v=${Date.now()}`;
-  const res = await fetch(url, { cache: "no-store" });
-  if (!res.ok) throw new Error(`Cannot fetch manifest (${res.status}): ${await readErrorText(res)}`);
-  return (await res.json()) as ProjectManifest;
-}
 
 export async function POST(req: Request): Promise<Response> {
   try {
@@ -75,7 +54,7 @@ export async function POST(req: Request): Promise<Response> {
     }
 
     // Re-fetch latest manifest before saving to avoid resurrecting deleted assets
-    const latest = await fetchManifest(manifestUrl);
+    const latest = await fetchManifestDirect(manifestUrl);
     if (latest.projectId !== projectId) {
       return NextResponse.json({ ok: false, error: "projectId does not match manifest" }, { status: 400 });
     }

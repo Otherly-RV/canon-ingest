@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { saveManifest, type ProjectManifest } from "@/app/lib/manifest";
+import { saveManifest, fetchManifestDirect, type ProjectManifest } from "@/app/lib/manifest";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -12,21 +12,6 @@ type Body = {
   width?: number;
   height?: number;
 };
-
-function baseUrl(u: string) {
-  const url = new URL(u);
-  return `${url.origin}${url.pathname}`;
-}
-
-async function fetchManifest(manifestUrlRaw: string): Promise<ProjectManifest> {
-  const url = baseUrl(manifestUrlRaw);
-  const res = await fetch(`${url}?v=${Date.now()}`, {
-    cache: "no-store",
-    headers: { "Cache-Control": "no-cache" }
-  });
-  if (!res.ok) throw new Error(`Cannot fetch manifest (${res.status})`);
-  return (await res.json()) as ProjectManifest;
-}
 
 export async function POST(req: Request): Promise<Response> {
   let body: Body;
@@ -48,7 +33,7 @@ export async function POST(req: Request): Promise<Response> {
   }
 
   // Re-fetch latest manifest to avoid race conditions
-  const manifest = await fetchManifest(manifestUrl);
+  const manifest = await fetchManifestDirect(manifestUrl);
   if (manifest.projectId !== projectId) {
     return NextResponse.json({ ok: false, error: "projectId does not match manifest" }, { status: 400 });
   }

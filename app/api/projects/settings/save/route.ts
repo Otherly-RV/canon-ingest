@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { saveManifest, type ProjectManifest } from "@/app/lib/manifest";
+import { saveManifest, fetchManifestDirect, type ProjectManifest } from "@/app/lib/manifest";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -10,23 +10,6 @@ type Body = {
   aiRules?: string;
   taggingJson?: string;
 };
-
-function baseUrl(u: string) {
-  const url = new URL(u);
-  return `${url.origin}${url.pathname}`;
-}
-
-async function fetchManifest(manifestUrlRaw: string): Promise<ProjectManifest> {
-  const url = baseUrl(manifestUrlRaw);
-  const res = await fetch(`${url}?v=${Date.now()}`, {
-    cache: "no-store",
-    headers: { "Cache-Control": "no-cache" }
-  });
-  if (!res.ok) {
-    throw new Error(`Cannot fetch manifest (${res.status})`);
-  }
-  return (await res.json()) as ProjectManifest;
-}
 
 export async function POST(req: Request): Promise<Response> {
   let body: Body;
@@ -54,7 +37,7 @@ export async function POST(req: Request): Promise<Response> {
 
   let manifest: ProjectManifest;
   try {
-    manifest = await fetchManifest(manifestUrlRaw);
+    manifest = await fetchManifestDirect(manifestUrlRaw);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     return NextResponse.json({ ok: false, error: msg }, { status: 400 });
@@ -65,7 +48,7 @@ export async function POST(req: Request): Promise<Response> {
   }
 
   // Re-fetch latest manifest to avoid race conditions
-  const latest = await fetchManifest(manifestUrlRaw);
+  const latest = await fetchManifestDirect(manifestUrlRaw);
   if (latest.projectId !== projectId) {
     return NextResponse.json({ ok: false, error: "projectId does not match manifest on re-fetch" }, { status: 400 });
   }

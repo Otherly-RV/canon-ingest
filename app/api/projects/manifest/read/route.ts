@@ -35,7 +35,13 @@ export async function POST(req: Request): Promise<Response> {
 
     const url = `${baseUrl(manifestUrlRaw)}?v=${Date.now()}`;
 
-    const res = await fetch(url, { cache: "no-store" });
+    const res = await fetch(url, { 
+      cache: "no-store",
+      headers: {
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache'
+      }
+    });
     if (!res.ok) {
       return NextResponse.json(
         { ok: false, error: `Cannot fetch manifest (${res.status}): ${await readErrorText(res)}` },

@@ -198,6 +198,7 @@ function Tabs({
 
 export default function Page() {
   const fileRef = useRef<HTMLInputElement>(null);
+  const deletingRef = useRef<Set<string>>(new Set());
 
   const [busy, setBusy] = useState("");
   const [projectId, setProjectId] = useState<string>("");
@@ -241,8 +242,12 @@ export default function Page() {
   async function loadManifest(url: string) {
     const mRes = await fetch("/api/projects/manifest/read", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ manifestUrl: url })
+      headers: { 
+        "Content-Type": "application/json",
+        "Cache-Control": "no-cache"
+      },
+      body: JSON.stringify({ manifestUrl: url }),
+      cache: "no-store"
     });
 
     if (!mRes.ok) throw new Error(`Failed to read manifest: ${await readErrorText(mRes)}`);
@@ -692,11 +697,15 @@ export default function Page() {
     if (!projectId || !manifestUrl) return;
 
     const key = `${pageNumber}-${assetId}`;
-    if (deletingAssets[key]) return;
+    
+    // Use ref to prevent duplicate calls (state can be stale in closures)
+    if (deletingRef.current.has(key)) return;
+    deletingRef.current.add(key);
 
     setDeletingAssets((m) => ({ ...m, [key]: true }));
     setLastError("");
 
+    // Optimistic update: immediately remove from UI
     setManifest((prev) => {
       if (!prev?.pages) return prev;
       return {
@@ -723,12 +732,18 @@ export default function Page() {
 
       setManifestUrl(j.manifestUrl);
       setUrlParams(projectId, j.manifestUrl);
+      
+      // Small delay before re-fetching to let Vercel propagate
+      await new Promise((resolve) => setTimeout(resolve, 300));
       await loadManifest(j.manifestUrl);
       await refreshProjects();
     } catch (e) {
       setLastError(e instanceof Error ? e.message : String(e));
+      // On error, reload to get true state
+      await new Promise((resolve) => setTimeout(resolve, 300));
       await loadManifest(manifestUrl);
     } finally {
+      deletingRef.current.delete(key);
       setDeletingAssets((m) => {
         const copy = { ...m };
         delete copy[key];
