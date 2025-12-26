@@ -152,51 +152,48 @@ export async function POST(req: Request): Promise<Response> {
     return NextResponse.json({ ok: false, error: "Missing projectId/manifestUrl" }, { status: 400 });
   }
 
+  // Re-fetch latest manifest before saving to avoid resurrecting deleted assets
   let manifest: ProjectManifest;
   try {
     manifest = await fetchManifest(manifestUrlRaw);
   } catch (e) {
     return NextResponse.json({ ok: false, error: e instanceof Error ? e.message : String(e) }, { status: 400 });
   }
-
   if (manifest.projectId !== projectId) {
     return NextResponse.json({ ok: false, error: "projectId does not match manifest" }, { status: 400 });
   }
-
   const textUrl = manifest.extractedText?.url;
   if (!textUrl) {
     return NextResponse.json({ ok: false, error: "No extractedText found. Run Process Text first." }, { status: 400 });
   }
-
   const pages = (manifest.pages ?? []) as PageImage[];
   if (!Array.isArray(pages) || pages.length === 0) {
     return NextResponse.json({ ok: false, error: "No PNG pages found. Run Rasterize PNGs first." }, { status: 400 });
   }
-
   const taggingRaw = manifest.settings?.taggingJson ?? "{}";
   const cfg = safeParseTaggingJson(taggingRaw);
-
   let fullText = "";
   try {
     fullText = await fetchExtractedText(textUrl);
   } catch (e) {
     return NextResponse.json({ ok: false, error: e instanceof Error ? e.message : String(e) }, { status: 400 });
   }
-
   const totalPages = pages.length;
-
   // Add tags per page (stored on pages[n] as "tags")
   const updatedPages = pages.map((p) => {
     const pageText = sliceForPage(fullText, p.pageNumber, totalPages);
     const tags = extractTags(pageText, cfg);
     return { ...p, tags };
   });
-
-  // Write back to manifest
+  // Final filter: never keep assets with tombstoned assetIds
+  for (const p of updatedPages) {
+    if (Array.isArray(p.deletedAssetIds) && Array.isArray(p.assets)) {
+      const deleted = new Set(p.deletedAssetIds);
+      p.assets = p.assets.filter((a) => !deleted.has(a.assetId));
+    }
+  }
   (manifest as unknown as { pages: unknown }).pages = updatedPages;
-
   const newManifestUrl = await saveManifest(manifest);
-
   return NextResponse.json({
     ok: true,
     manifestUrl: newManifestUrl,

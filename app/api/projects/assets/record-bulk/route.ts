@@ -74,24 +74,20 @@ export async function POST(req: Request): Promise<Response> {
       }
     }
 
-    const manifest = await fetchManifest(manifestUrl);
-    if (manifest.projectId !== projectId) {
+    // Re-fetch latest manifest before saving to avoid resurrecting deleted assets
+    let latest = await fetchManifest(manifestUrl);
+    if (latest.projectId !== projectId) {
       return NextResponse.json({ ok: false, error: "projectId does not match manifest" }, { status: 400 });
     }
-
-    if (!Array.isArray(manifest.pages)) manifest.pages = [];
-
-    const page = manifest.pages.find((p) => p.pageNumber === pageNumber);
+    if (!Array.isArray(latest.pages)) latest.pages = [];
+    const page = latest.pages.find((p) => p.pageNumber === pageNumber);
     if (!page) {
       return NextResponse.json({ ok: false, error: `Page ${pageNumber} not found in manifest.pages` }, { status: 400 });
     }
-
     const deleted = new Set<string>(Array.isArray(page.deletedAssetIds) ? page.deletedAssetIds : []);
-
     const existing = Array.isArray(page.assets) ? page.assets : [];
     const byId = new Map<string, PageAsset>();
     for (const e of existing) byId.set(e.assetId, e);
-
     for (const a of incoming) {
       // Respect tombstones: never resurrect a deleted assetId.
       if (deleted.has(a.assetId)) continue;
@@ -103,10 +99,9 @@ export async function POST(req: Request): Promise<Response> {
       };
       byId.set(a.assetId, merged);
     }
-
-    page.assets = Array.from(byId.values()).sort((a, b) => a.assetId.localeCompare(b.assetId));
-
-    const newManifestUrl = await saveManifest(manifest);
+    // Final filter: never keep assets with tombstoned assetIds
+    page.assets = Array.from(byId.values()).filter((a) => !deleted.has(a.assetId)).sort((a, b) => a.assetId.localeCompare(b.assetId));
+    const newManifestUrl = await saveManifest(latest);
     return NextResponse.json({ ok: true, manifestUrl: newManifestUrl, pageNumber, count: incoming.length });
   } catch (e) {
     return NextResponse.json({ ok: false, error: e instanceof Error ? e.message : String(e) }, { status: 500 });
