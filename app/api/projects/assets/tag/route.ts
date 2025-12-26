@@ -138,14 +138,21 @@ function buildPrompt(args: {
     taggingJson,
     ``,
     `TASK: You are tagging ONE cropped image asset extracted from a PDF page.`,
+    `Analyze the IMAGE provided to understand what it shows visually.`,
+    `Use the PAGE TEXT below for context about what this image relates to in the document.`,
     `You must output ONLY valid JSON (no markdown).`,
     ``,
     `CONTEXT:`,
     `- pageNumber: ${pageNumber}`,
     `- assetId: ${assetId}`,
     ``,
-    `PAGE TEXT (use to keep tags coherent with document; do not invent):`,
+    `PAGE TEXT (use for context about what this image relates to):`,
     pageText,
+    ``,
+    `TAGGING APPROACH:`,
+    `1. Look at the image to understand what it visually depicts (objects, scenes, diagrams, etc.)`,
+    `2. Use the page text to understand the context (what topic/section this image belongs to)`,
+    `3. Combine visual + contextual understanding into meaningful tags`,
     ``,
     `OUTPUT SCHEMA (JSON):`,
     `{`,
@@ -157,13 +164,37 @@ function buildPrompt(args: {
     `- tags must be short, lowercase preferred, comma-free strings`,
     `- max ${maxTags} tags`,
     `- if uncertain, output fewer tags (not guesses)`,
-    `- rationale must cite words/phrases from the PAGE TEXT when possible`
+    `- rationale should mention what you see in the image AND how it relates to the page text`
   ].join("\n");
 }
 
-async function geminiGenerate(model: GenerativeModel, prompt: string) {
+async function fetchImageAsBase64(url: string): Promise<{ base64: string; mimeType: string }> {
+  const res = await fetch(`${baseUrl(url)}?v=${Date.now()}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Failed to fetch image: ${res.status}`);
+  
+  const contentType = res.headers.get("content-type") || "image/png";
+  const buffer = await res.arrayBuffer();
+  const base64 = Buffer.from(buffer).toString("base64");
+  
+  return { base64, mimeType: contentType };
+}
+
+async function geminiGenerateWithImage(
+  model: GenerativeModel,
+  prompt: string,
+  imageBase64: string,
+  imageMimeType: string
+) {
   const res = await model.generateContent({
-    contents: [{ role: "user", parts: [{ text: prompt }] }],
+    contents: [
+      {
+        role: "user",
+        parts: [
+          { inlineData: { mimeType: imageMimeType, data: imageBase64 } },
+          { text: prompt }
+        ]
+      }
+    ],
     generationConfig: {
       temperature: 0.2,
       topP: 0.9,
@@ -194,12 +225,16 @@ async function callGeminiTagger(args: {
   taggingJson: string;
   pageNumber: number;
   assetId: string;
+  assetUrl: string;
   pageText: string;
 }) {
-  const { apiKey, modelName, aiRules, taggingJson, pageNumber, assetId, pageText } = args;
+  const { apiKey, modelName, aiRules, taggingJson, pageNumber, assetId, assetUrl, pageText } = args;
 
   const genAI = new GoogleGenerativeAI(apiKey);
   const model = genAI.getGenerativeModel({ model: modelName });
+
+  // Fetch the image for visual analysis
+  const { base64: imageBase64, mimeType: imageMimeType } = await fetchImageAsBase64(assetUrl);
 
   // Read max_tags_per_image from taggingJson if present
   let maxTags = 20;
@@ -221,7 +256,7 @@ async function callGeminiTagger(args: {
     {
       prompt:
         promptA +
-        `\n\nIMPORTANT: Output ONLY JSON. No markdown. If you cannot comply, output {"tags":[],"rationale":"insufficient evidence in page text"}.`
+        `\n\nIMPORTANT: Output ONLY JSON. No markdown. If you cannot comply, output {"tags":[],"rationale":"could not analyze image"}.`
     }
   ];
 
@@ -229,7 +264,7 @@ async function callGeminiTagger(args: {
 
   for (let i = 0; i < attempts.length; i++) {
     try {
-      const { text } = await geminiGenerate(model, attempts[i].prompt);
+      const { text } = await geminiGenerateWithImage(model, attempts[i].prompt, imageBase64, imageMimeType);
 
       const parsed = safeParseJsonFromText(text);
       if (!parsed || typeof parsed !== "object") throw new Error("Gemini did not return valid JSON");
@@ -241,7 +276,7 @@ async function callGeminiTagger(args: {
       // Accept even empty tags if rationale exists; otherwise make a safe fallback
       return {
         tags,
-        rationale: rationale || (tags.length ? "tags inferred from page text" : "insufficient evidence in page text")
+        rationale: rationale || (tags.length ? "tags inferred from image and context" : "could not determine tags")
       };
     } catch (e) {
       lastErr = e instanceof Error ? e : new Error(String(e));
@@ -319,6 +354,7 @@ export async function POST(req: Request): Promise<Response> {
           taggingJson,
           pageNumber,
           assetId: asset.assetId,
+          assetUrl: asset.url,
           pageText
         });
 
