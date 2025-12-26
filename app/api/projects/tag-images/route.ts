@@ -193,11 +193,23 @@ export async function POST(req: Request): Promise<Response> {
     return NextResponse.json({ ok: false, error: "projectId does not match manifest on re-fetch" }, { status: 400 });
   }
 
+  let taggedCount = 0;
+
   if (Array.isArray(latest.pages)) {
     for (const p of latest.pages) {
       const tags = newTagsByPage.get(p.pageNumber);
       if (tags) {
         p.tags = tags;
+        // Also apply to all assets on this page
+        if (Array.isArray(p.assets)) {
+          for (const a of p.assets) {
+             // Union with existing tags
+             const existing = new Set(a.tags || []);
+             for (const t of tags) existing.add(t);
+             a.tags = Array.from(existing);
+             taggedCount++;
+          }
+        }
       }
       // Final filter: never keep assets with tombstoned assetIds
       if (Array.isArray(p.deletedAssetIds) && Array.isArray(p.assets)) {
@@ -206,6 +218,12 @@ export async function POST(req: Request): Promise<Response> {
       }
     }
   }
+
+  // Add debug log
+  if (!Array.isArray(latest.debugLog)) latest.debugLog = [];
+  const timestamp = new Date().toISOString();
+  latest.debugLog.unshift(`[${timestamp}] TAG-IMAGES: Tagged ${taggedCount} assets across ${newTagsByPage.size} pages.`);
+  if (latest.debugLog.length > 50) latest.debugLog = latest.debugLog.slice(0, 50);
 
   const newManifestUrl = await saveManifest(latest);
   return NextResponse.json({

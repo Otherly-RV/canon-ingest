@@ -101,6 +101,13 @@ export async function POST(req: Request): Promise<Response> {
     }
     // Final filter: never keep assets with tombstoned assetIds
     page.assets = Array.from(byId.values()).filter((a) => !deleted.has(a.assetId)).sort((a, b) => a.assetId.localeCompare(b.assetId));
+
+    // Add debug log
+    if (!Array.isArray(latest.debugLog)) latest.debugLog = [];
+    const timestamp = new Date().toISOString();
+    latest.debugLog.unshift(`[${timestamp}] RECORD-BULK: Page ${pageNumber}, recorded ${incoming.length} assets. Total on page: ${page.assets.length}.`);
+    if (latest.debugLog.length > 50) latest.debugLog = latest.debugLog.slice(0, 50);
+
     const newManifestUrl = await saveManifest(latest);
     return NextResponse.json({ ok: true, manifestUrl: newManifestUrl, pageNumber, count: incoming.length });
   } catch (e) {

@@ -158,6 +158,12 @@ export async function POST(req: Request): Promise<Response> {
         .sort((a, b) => a.assetId.localeCompare(b.assetId));
     }
 
+    // Add debug log
+    if (!Array.isArray(latest.debugLog)) latest.debugLog = [];
+    const timestamp = new Date().toISOString();
+    latest.debugLog.unshift(`[${timestamp}] REBUILD-INDEX: Rebuilt index. Found ${found.size} blobs.`);
+    if (latest.debugLog.length > 50) latest.debugLog = latest.debugLog.slice(0, 50);
+
     const newManifestUrl = await saveManifest(latest);
 
     return NextResponse.json({

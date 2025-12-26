@@ -222,6 +222,12 @@ export async function POST(req: Request): Promise<Response> {
     
     latest.pages.sort((a, b) => a.pageNumber - b.pageNumber);
 
+    // Add debug log
+    if (!Array.isArray(latest.debugLog)) latest.debugLog = [];
+    const timestamp = new Date().toISOString();
+    latest.debugLog.unshift(`[${timestamp}] RESTORE: Restored assets. Found ${assetBlobs.length} blobs.`);
+    if (latest.debugLog.length > 50) latest.debugLog = latest.debugLog.slice(0, 50);
+
     const newManifestUrl = await saveManifest(latest);
 
     return NextResponse.json({
