@@ -519,41 +519,40 @@ export default function Page() {
     setLastError("");
 
     if (!projectId || !manifestUrl) return setLastError("Missing projectId/manifestUrl");
-    if (!manifest?.docAiJson?.url) return setLastError("No DocAI JSON");
-    if (!manifest.pages?.length) return setLastError("No page PNGs");
+    if (!manifest?.pages?.length) return setLastError("No page PNGs - run Rasterize first");
     if (busy || splitProgress.running) return;
 
-    setBusy("Splitting...");
-    setSplitProgress({ running: true, page: 0, totalPages: manifest.pages.length, assetsUploaded: 0 });
+    const pages = manifest.pages;
+
+    setBusy("Detecting images...");
+    setSplitProgress({ running: true, page: 0, totalPages: pages.length, assetsUploaded: 0 });
+    log("Starting image detection with Gemini...");
 
     try {
-      const detectRes = await fetch("/api/projects/assets/detect", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectId, manifestUrl })
-      });
-
-      if (!detectRes.ok) throw new Error(await readErrorText(detectRes));
-
-      const detected = (await detectRes.json()) as {
-        ok: boolean;
-        pages?: Array<{ pageNumber: number; boxes: AssetBBox[] }>;
-        error?: string;
-      };
-
-      if (!detected.ok || !Array.isArray(detected.pages)) throw new Error(detected.error || "Detect failed (bad response)");
-
-      const byPage = new Map<number, AssetBBox[]>();
-      for (const p of detected.pages) {
-        byPage.set(p.pageNumber, Array.isArray(p.boxes) ? p.boxes : []);
-      }
-
-      const pages = manifest.pages;
-
       for (const page of pages) {
         setSplitProgress((s) => ({ ...s, page: page.pageNumber }));
+        log(`Detecting images on page ${page.pageNumber}...`);
 
-        const boxes = byPage.get(page.pageNumber) ?? [];
+        // Use Gemini to detect images on this page
+        const detectRes = await fetch("/api/projects/assets/detect-gemini", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            pageUrl: page.url,
+            pageWidth: page.width,
+            pageHeight: page.height
+          })
+        });
+
+        if (!detectRes.ok) {
+          log(`Detection failed for page ${page.pageNumber}: ${await readErrorText(detectRes)}`);
+          continue;
+        }
+
+        const detected = (await detectRes.json()) as { boxes?: Array<{ x: number; y: number; width: number; height: number }>; error?: string };
+        const boxes = detected.boxes ?? [];
+        log(`Found ${boxes.length} images on page ${page.pageNumber}`);
+
         if (boxes.length === 0) continue;
 
         const img = await new Promise<HTMLImageElement>((resolve, reject) => {
@@ -568,15 +567,17 @@ export default function Page() {
 
         for (let i = 0; i < boxes.length; i++) {
           const b = boxes[i];
+          // Convert from {x, y, width, height} to {x, y, w, h}
+          const bbox: AssetBBox = { x: b.x, y: b.y, w: b.width, h: b.height };
 
           const canvas = document.createElement("canvas");
           const ctx = canvas.getContext("2d");
           if (!ctx) throw new Error("Cannot create canvas 2D context");
 
-          canvas.width = Math.max(1, Math.floor(b.w));
-          canvas.height = Math.max(1, Math.floor(b.h));
+          canvas.width = Math.max(1, Math.floor(bbox.w));
+          canvas.height = Math.max(1, Math.floor(bbox.h));
 
-          ctx.drawImage(img, b.x, b.y, b.w, b.h, 0, 0, canvas.width, canvas.height);
+          ctx.drawImage(img, bbox.x, bbox.y, bbox.w, bbox.h, 0, 0, canvas.width, canvas.height);
 
           const pngBlob = await new Promise<Blob>((resolve, reject) => {
             canvas.toBlob((bb) => (bb ? resolve(bb) : reject(new Error("toBlob returned null"))), "image/png");
@@ -590,9 +591,10 @@ export default function Page() {
             handleUploadUrl: "/api/blob"
           });
 
-          uploadedForPage.push({ assetId, url: uploaded.url, bbox: b });
+          uploadedForPage.push({ assetId, url: uploaded.url, bbox });
 
           setSplitProgress((s) => ({ ...s, assetsUploaded: s.assetsUploaded + 1 }));
+          log(`Uploaded asset ${assetId}`);
         }
 
         if (uploadedForPage.length > 0) {
@@ -600,9 +602,12 @@ export default function Page() {
         }
       }
 
+      log("Detection complete");
       await refreshProjects();
     } catch (e) {
-      setLastError(e instanceof Error ? e.message : String(e));
+      const msg = e instanceof Error ? e.message : String(e);
+      log(`Detection error: ${msg}`);
+      setLastError(msg);
     } finally {
       setBusy("");
       setSplitProgress((s) => ({ ...s, running: false }));
@@ -1044,18 +1049,18 @@ export default function Page() {
 
           <button
             type="button"
-            disabled={!manifest?.docAiJson?.url || !manifest?.pages?.length || !!busy || splitProgress.running}
+            disabled={!manifest?.pages?.length || !!busy || splitProgress.running}
             onClick={() => void splitImages()}
             style={{
               border: "1px solid #000",
-              background: manifest?.docAiJson?.url && manifest?.pages?.length && !busy ? "#000" : "#fff",
-              color: manifest?.docAiJson?.url && manifest?.pages?.length && !busy ? "#fff" : "#000",
+              background: manifest?.pages?.length && !busy ? "#000" : "#fff",
+              color: manifest?.pages?.length && !busy ? "#fff" : "#000",
               padding: "10px 12px",
               borderRadius: 12,
-              opacity: manifest?.docAiJson?.url && manifest?.pages?.length && !busy ? 1 : 0.4
+              opacity: manifest?.pages?.length && !busy ? 1 : 0.4
             }}
           >
-            5. Split Images
+            5. Detect Images
           </button>
 
           <button
