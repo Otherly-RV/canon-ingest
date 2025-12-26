@@ -233,6 +233,12 @@ export default function Page() {
     assetsUploaded: 0
   });
 
+  const [taggingProgress, setTaggingProgress] = useState({
+    running: false,
+    total: 0,
+    tagged: 0
+  });
+
   const [assetsOpen, setAssetsOpen] = useState(true);
   const [deletingAssets, setDeletingAssets] = useState<Record<string, boolean>>({});
 
@@ -704,6 +710,65 @@ export default function Page() {
     }
   }
 
+  async function tagAssets() {
+    setLastError("");
+    if (!projectId || !manifestUrl) return;
+    if (!manifest?.pages?.length) {
+      setLastError("No pages to tag.");
+      return;
+    }
+
+    // Count untagged assets
+    let untagged = 0;
+    for (const p of manifest.pages) {
+      for (const a of p.assets ?? []) {
+        if (!Array.isArray(a.tags) || a.tags.length === 0) untagged += 1;
+      }
+    }
+
+    if (untagged === 0) {
+      log("All assets already tagged.");
+      return;
+    }
+
+    setBusy("Tagging assets...");
+    setTaggingProgress({ running: true, total: untagged, tagged: 0 });
+    log(`Starting tagging of ${untagged} untagged assets...`);
+
+    try {
+      const r = await fetch("/api/projects/assets/tag", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId, manifestUrl })
+      });
+
+      const j = (await r.json()) as {
+        ok: boolean;
+        manifestUrl?: string;
+        error?: string;
+        considered?: number;
+        tagged?: number;
+      };
+
+      if (!r.ok || !j.ok || !j.manifestUrl) throw new Error(j.error || `Tagging failed (${r.status})`);
+
+      log(`Tagging complete: ${j.tagged} assets tagged out of ${j.considered} considered`);
+      setTaggingProgress((s) => ({ ...s, tagged: j.tagged ?? 0 }));
+
+      setManifestUrl(j.manifestUrl);
+      setUrlParams(projectId, j.manifestUrl);
+      await loadManifest(j.manifestUrl);
+      await refreshProjects();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      log(`Tagging error: ${msg}`);
+      setLastError(msg);
+    } finally {
+      setBusy("");
+      setTaggingProgress((s) => ({ ...s, running: false }));
+    }
+  }
+
   async function deleteProject(targetProjectId: string) {
     const ok = window.confirm(`Delete project ${targetProjectId}?`);
     if (!ok) return;
@@ -1088,6 +1153,22 @@ export default function Page() {
         >
           5. Detect Images
         </button>
+
+        <button
+          type="button"
+          disabled={!totalAssetsCount || !!busy || taggingProgress.running}
+          onClick={() => void tagAssets()}
+          style={{
+            border: "1px solid #000",
+            background: totalAssetsCount && !busy ? "#000" : "#fff",
+            color: totalAssetsCount && !busy ? "#fff" : "#000",
+            padding: "10px 12px",
+            borderRadius: 12,
+            opacity: totalAssetsCount && !busy ? 1 : 0.4
+          }}
+        >
+          6. Tag Assets
+        </button>
       </div>
 
       {/* Row 3: Utility buttons aligned right */}
@@ -1139,6 +1220,12 @@ export default function Page() {
           {splitProgress.totalPages > 0 && (
             <div style={{ marginTop: 10, fontSize: 13, opacity: 0.85 }}>
               Detect: {splitProgress.page}/{splitProgress.totalPages} · {splitProgress.assetsUploaded} assets
+            </div>
+          )}
+
+          {taggingProgress.running && (
+            <div style={{ marginTop: 10, fontSize: 13, opacity: 0.85 }}>
+              Tagging: {taggingProgress.tagged}/{taggingProgress.total} assets
             </div>
           )}
         </div>
@@ -1557,7 +1644,7 @@ export default function Page() {
         {assetsOpen && (
           <div style={{ padding: "0 14px 14px 14px" }}>
             <div style={{ fontSize: 13, opacity: 0.75, marginBottom: 10 }}>
-              {taggedAssetsCount}/{totalAssetsCount}
+              {taggedAssetsCount} tagged / {totalAssetsCount} total
             </div>
 
             {assetsFlat.length === 0 ? (
