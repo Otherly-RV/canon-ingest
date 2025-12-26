@@ -37,7 +37,7 @@ function buildClient(): DocumentProcessorServiceClient {
 }
 
 function processorName(): string {
-  const projectId = getEnv("GCP_PROJECT_ID");
+  const projectId = getEnv("DOCAI_PROJECT_ID");
   const location = getEnv("DOCAI_LOCATION");
   const processorId = getEnv("DOCAI_PROCESSOR_ID");
   return `projects/${projectId}/locations/${location}/processors/${processorId}`;

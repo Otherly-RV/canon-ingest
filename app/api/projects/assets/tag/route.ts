@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { saveManifest, fetchManifestDirect, type ProjectManifest, type PageAsset } from "@/app/lib/manifest";
+import { saveManifest, type ProjectManifest, type PageAsset } from "@/app/lib/manifest";
 import { GoogleGenerativeAI, type GenerativeModel } from "@google/generative-ai";
 
 export const runtime = "nodejs";
@@ -266,12 +266,12 @@ export async function POST(req: Request): Promise<Response> {
 
     const GEMINI_API_KEY = mustEnv("GEMINI_API_KEY");
     // Default to a modern model name; you can override via env
-    const GEMINI_MODEL = optEnv("GEMINI_TAG_MODEL", optEnv("GEMINI_MODEL", "gemini-2.0-flash"));
+    const GEMINI_MODEL = optEnv("GEMINI_MODEL", "gemini-2.0-flash");
 
     // NOTE: We will *not* save this manifest directly at the end.
     // Tagging can take time, and the user may delete assets while it's running.
     // If we save the stale manifest, we can resurrect deleted assets.
-    const manifest = await fetchManifestDirect(manifestUrl);
+    const manifest = await fetchJson<ProjectManifest>(manifestUrl);
 
     if (manifest.projectId !== projectId) {
       return NextResponse.json({ ok: false, error: "projectId does not match manifest" }, { status: 400 });
@@ -283,14 +283,6 @@ export async function POST(req: Request): Promise<Response> {
 
     if (!manifest.pages || !Array.isArray(manifest.pages) || manifest.pages.length === 0) {
       return NextResponse.json({ ok: false, error: "No pages in manifest" }, { status: 400 });
-    }
-
-    // Count how many assets already have tags (before we start)
-    let alreadyTaggedAtStart = 0;
-    for (const p of manifest.pages) {
-      for (const a of p.assets ?? []) {
-        if (Array.isArray(a.tags) && a.tags.length > 0) alreadyTaggedAtStart++;
-      }
     }
 
     // Full text (fallback) — later you can store per-page text in DocAI JSON
@@ -339,15 +331,7 @@ export async function POST(req: Request): Promise<Response> {
 
     // Re-fetch latest manifest and merge tag updates onto it, so we don't
     // overwrite concurrent changes like deletions.
-    const latest = await fetchManifestDirect(manifestUrl);
-
-    // Count existing tags before merge
-    let existingTaggedCount = 0;
-    for (const p of latest.pages ?? []) {
-      for (const a of p.assets ?? []) {
-        if (Array.isArray(a.tags) && a.tags.length > 0) existingTaggedCount++;
-      }
-    }
+    const latest = await fetchJson<ProjectManifest>(manifestUrl);
 
     for (const u of updates) {
       const p = latest.pages?.find((x) => x.pageNumber === u.pageNumber);
@@ -359,12 +343,6 @@ export async function POST(req: Request): Promise<Response> {
       (a as PageAsset).tagRationale = u.rationale;
     }
 
-    // Add debug log
-    if (!Array.isArray(latest.debugLog)) latest.debugLog = [];
-    const timestamp = new Date().toISOString();
-    latest.debugLog.unshift(`[${timestamp}] AI-TAG: Tagged ${totalTagged} new. At start: ${alreadyTaggedAtStart} had tags. After re-fetch: ${existingTaggedCount} had tags. Model: ${GEMINI_MODEL}.`);
-    if (latest.debugLog.length > 50) latest.debugLog = latest.debugLog.slice(0, 50);
-
     const newManifestUrl = await saveManifest(latest);
 
     return NextResponse.json({
@@ -372,8 +350,6 @@ export async function POST(req: Request): Promise<Response> {
       manifestUrl: newManifestUrl,
       considered: totalConsidered,
       tagged: totalTagged,
-      alreadyTaggedAtStart,
-      existingTaggedAfterRefetch: existingTaggedCount,
       model: GEMINI_MODEL
     });
   } catch (e) {

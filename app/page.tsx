@@ -301,8 +301,7 @@ export default function Page() {
     setBusy("Uploading SOURCE...");
 
     try {
-      // Always create a new project for each upload
-      const p = await createProject();
+      const p = projectId && manifestUrl ? { projectId, manifestUrl } : await createProject();
 
       const form = new FormData();
       form.append("file", file);
@@ -356,11 +355,11 @@ export default function Page() {
     }
   }
 
-  async function recordPage(pageNumber: number, url: string, width: number, height: number) {
+  async function recordPage(pageNumber: number, url: string, width: number, height: number, currentManifestUrl: string): Promise<string> {
     const r = await fetch("/api/projects/pages/record", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ projectId, manifestUrl, pageNumber, url, width, height })
+      body: JSON.stringify({ projectId, manifestUrl: currentManifestUrl, pageNumber, url, width, height })
     });
 
     if (!r.ok) throw new Error(await readErrorText(r));
@@ -370,7 +369,7 @@ export default function Page() {
 
     setManifestUrl(j.manifestUrl);
     setUrlParams(projectId, j.manifestUrl);
-    await loadManifest(j.manifestUrl);
+    return j.manifestUrl;
   }
 
   async function rasterizeToPngs() {
@@ -392,6 +391,9 @@ export default function Page() {
 
       const totalPages = Number(pdf.numPages) || 0;
       setRasterProgress((p) => ({ ...p, totalPages }));
+
+      // Track manifestUrl through the loop to avoid race conditions
+      let currentManifestUrl = manifestUrl;
 
       for (let pageNumber = 1; pageNumber <= totalPages; pageNumber++) {
         setRasterProgress((p) => ({ ...p, currentPage: pageNumber }));
@@ -420,11 +422,13 @@ export default function Page() {
           handleUploadUrl: "/api/blob"
         });
 
-        await recordPage(pageNumber, blob.url, canvas.width, canvas.height);
+        currentManifestUrl = await recordPage(pageNumber, blob.url, canvas.width, canvas.height, currentManifestUrl);
 
         setRasterProgress((p) => ({ ...p, uploaded: p.uploaded + 1 }));
       }
 
+      // Load final manifest at the end
+      await loadManifest(currentManifestUrl);
       await refreshProjects();
     } catch (e) {
       setLastError(e instanceof Error ? e.message : String(e));
