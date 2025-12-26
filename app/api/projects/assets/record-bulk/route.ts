@@ -75,7 +75,7 @@ export async function POST(req: Request): Promise<Response> {
     }
 
     // Re-fetch latest manifest before saving to avoid resurrecting deleted assets
-    let latest = await fetchManifest(manifestUrl);
+    const latest = await fetchManifest(manifestUrl);
     if (latest.projectId !== projectId) {
       return NextResponse.json({ ok: false, error: "projectId does not match manifest" }, { status: 400 });
     }

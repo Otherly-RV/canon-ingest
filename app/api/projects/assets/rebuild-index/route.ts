@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { list } from "@vercel/blob"; 
-import { saveManifest, type ProjectManifest, type PageAsset, type AssetBBox } from "@/app/lib/manifest";
+import { saveManifest, type ProjectManifest, type PageAsset } from "@/app/lib/manifest";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
