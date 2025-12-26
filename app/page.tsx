@@ -458,19 +458,19 @@ export default function Page() {
     await loadManifest(j.manifestUrl);
   }
 
-  async function splitImages() {
+  async function splitImages(options?: { detectPath?: string; busyLabel?: string }) {
     setLastError("");
 
     if (!projectId || !manifestUrl) return setLastError("Missing projectId/manifestUrl");
-    if (!manifest?.docAiJson?.url) return setLastError("No DocAI JSON");
     if (!manifest.pages?.length) return setLastError("No page PNGs");
     if (busy || splitProgress.running) return;
 
-    setBusy("Splitting...");
+    const detectPath = options?.detectPath || "/api/projects/assets/detect";
+    setBusy(options?.busyLabel || "Splitting...");
     setSplitProgress({ running: true, page: 0, totalPages: manifest.pages.length, assetsUploaded: 0 });
 
     try {
-      const detectRes = await fetch("/api/projects/assets/detect", {
+      const detectRes = await fetch(detectPath, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ projectId, manifestUrl })
@@ -916,6 +916,22 @@ export default function Page() {
             }}
           >
             Split images
+          </button>
+
+          <button
+            type="button"
+            disabled={!manifest?.pages?.length || !!busy || splitProgress.running}
+            onClick={() => void splitImages({ detectPath: "/api/projects/assets/detect-gemini", busyLabel: "Splitting (Gemini)..." })}
+            style={{
+              border: "1px solid #000",
+              background: manifest?.pages?.length && !busy ? "#000" : "#fff",
+              color: manifest?.pages?.length && !busy ? "#fff" : "#000",
+              padding: "10px 12px",
+              borderRadius: 12,
+              opacity: manifest?.pages?.length && !busy ? 1 : 0.4
+            }}
+          >
+            Split (Gemini)
           </button>
 
           <button
