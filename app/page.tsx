@@ -34,6 +34,7 @@ type Manifest = {
     uiFieldsJson: string;
     taggingJson: string;
   };
+  debugLog?: string[];
 };
 
 type ProjectRow = {
