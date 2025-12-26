@@ -229,7 +229,7 @@ export async function POST(req: Request): Promise<Response> {
       manifestUrl: newManifestUrl,
       pagesFound: pageBlobs.length,
       assetsFound: assetBlobs.length,
-      pagesInManifest: pages.length
+      pagesInManifest: latest.pages?.length ?? 0
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
