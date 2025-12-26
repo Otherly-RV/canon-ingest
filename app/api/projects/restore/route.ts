@@ -80,7 +80,7 @@ export async function POST(req: Request): Promise<Response> {
       return NextResponse.json({ ok: false, error: "Missing projectId/manifestUrl" }, { status: 400 });
     }
 
-    const manifest = await fetchManifest(manifestUrl);
+    const manifest = await fetchManifestDirect(manifestUrl);
 
     if (manifest.projectId !== projectId) {
       return NextResponse.json({ ok: false, error: "projectId does not match manifest" }, { status: 400 });
