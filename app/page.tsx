@@ -216,6 +216,8 @@ export default function Page() {
   const [settingsBusy, setSettingsBusy] = useState(false);
   const [settingsError, setSettingsError] = useState<string>("");
 
+  const [activityLogOpen, setActivityLogOpen] = useState(true);
+
   const [aiRulesDraft, setAiRulesDraft] = useState<string>("");
   const [taggingJsonDraft, setTaggingJsonDraft] = useState<string>("");
 
@@ -1056,6 +1058,45 @@ export default function Page() {
 
       <div style={{ marginTop: 18, border: "1px solid #000", borderRadius: 12 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: 14 }}>
+          <div style={{ fontWeight: 800 }}>Activity Log</div>
+
+          <button
+            type="button"
+            aria-label={activityLogOpen ? "Collapse activity log" : "Expand activity log"}
+            onClick={() => setActivityLogOpen((v) => !v)}
+            style={{
+              border: "1px solid #000",
+              background: "#fff",
+              width: 36,
+              height: 30,
+              borderRadius: 10,
+              display: "grid",
+              placeItems: "center"
+            }}
+          >
+            <Chevron up={activityLogOpen} />
+          </button>
+        </div>
+
+        {activityLogOpen && (
+          <div style={{ padding: "0 14px 14px 14px" }}>
+            {Array.isArray(manifest?.debugLog) && manifest.debugLog.length > 0 ? (
+              <div style={{ maxHeight: 200, overflowY: "auto", background: "#fafafa", padding: 10, borderRadius: 8, border: "1px solid #eee" }}>
+                {manifest.debugLog.map((line, i) => (
+                  <div key={i} style={{ fontSize: 11, fontFamily: "monospace", marginBottom: 3, color: "#444" }}>
+                    {line}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div style={{ fontSize: 13, opacity: 0.7 }}>No activity recorded.</div>
+            )}
+          </div>
+        )}
+      </div>
+
+      <div style={{ marginTop: 18, border: "1px solid #000", borderRadius: 12 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: 14 }}>
           <div style={{ fontWeight: 800 }}>Projects</div>
 
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -1190,19 +1231,6 @@ export default function Page() {
 
         {assetsOpen && (
           <div style={{ padding: "0 14px 14px 14px" }}>
-            {Array.isArray(manifest?.debugLog) && manifest.debugLog.length > 0 && (
-              <div style={{ marginBottom: 14, border: "1px solid #eee", borderRadius: 8, padding: 10, background: "#fafafa" }}>
-                <div style={{ fontWeight: 600, fontSize: 12, marginBottom: 6 }}>Recent Activity Log</div>
-                <div style={{ maxHeight: 150, overflowY: "auto" }}>
-                  {manifest.debugLog.map((line, i) => (
-                    <div key={i} style={{ fontSize: 11, fontFamily: "monospace", marginBottom: 3, color: "#444" }}>
-                      {line}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
             <div style={{ fontSize: 13, opacity: 0.75, marginBottom: 10 }}>
               {taggedAssetsCount}/{totalAssetsCount}
             </div>
@@ -1254,19 +1282,6 @@ export default function Page() {
               <span style={{ opacity: 0.7 }}>manifestUrl:</span>
             </div>
             <div style={{ fontSize: 12, wordBreak: "break-all" }}>{manifestUrl || "—"}</div>
-
-            {Array.isArray(manifest?.debugLog) && manifest.debugLog.length > 0 && (
-              <div style={{ marginTop: 14, borderTop: "1px solid #eee", paddingTop: 10 }}>
-                <div style={{ fontWeight: 600, marginBottom: 4 }}>Background Log</div>
-                <div style={{ maxHeight: 200, overflowY: "auto", background: "#f5f5f5", padding: 8, borderRadius: 6 }}>
-                  {manifest.debugLog.map((line, i) => (
-                    <div key={i} style={{ fontSize: 11, fontFamily: "monospace", marginBottom: 2 }}>
-                      {line}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
 
             <div style={{ marginTop: 10 }}>
               <span style={{ opacity: 0.7 }}>sourcePdf:</span>
