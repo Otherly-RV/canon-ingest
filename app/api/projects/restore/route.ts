@@ -133,19 +133,24 @@ export async function POST(req: Request): Promise<Response> {
       }
     }
 
-    // Add assets if missing
+    // Add assets if missing, but never re-add tombstoned assetIds
     for (const b of assetBlobs) {
       const parsed = parseAssetFromPath(b.pathname);
       if (!parsed) continue;
 
+      // Check tombstone
       const page = pagesByNumber.get(parsed.pageNumber);
+      const deleted = page && Array.isArray(page.deletedAssetIds) ? new Set(page.deletedAssetIds) : new Set();
+      if (deleted.has(parsed.assetId)) continue;
+
       if (!page) {
         pagesByNumber.set(parsed.pageNumber, {
           pageNumber: parsed.pageNumber,
           url: "",
           width: 0,
           height: 0,
-          assets: [{ assetId: parsed.assetId, url: b.url, bbox: { ...ZERO_BBOX } }]
+          assets: [{ assetId: parsed.assetId, url: b.url, bbox: { ...ZERO_BBOX } }],
+          deletedAssetIds: []
         });
         continue;
       }
@@ -163,6 +168,14 @@ export async function POST(req: Request): Promise<Response> {
         // If exists but url missing, repair url
         const idx = page.assets.findIndex((a: PageAsset) => a.assetId === parsed.assetId);
         if (idx >= 0 && page.assets[idx] && !page.assets[idx].url) page.assets[idx].url = b.url;
+      }
+    }
+
+    // Final filter: never keep assets with tombstoned assetIds
+    for (const page of pagesByNumber.values()) {
+      const deleted = Array.isArray(page.deletedAssetIds) ? new Set(page.deletedAssetIds) : new Set();
+      if (Array.isArray(page.assets)) {
+        page.assets = page.assets.filter((a) => !deleted.has(a.assetId));
       }
     }
 

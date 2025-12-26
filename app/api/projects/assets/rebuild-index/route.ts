@@ -118,15 +118,10 @@ export async function POST(req: Request): Promise<Response> {
       const blobAssetsAll = foundByPage.get(p.pageNumber) ?? [];
       const deleted = new Set<string>(Array.isArray(p.deletedAssetIds) ? p.deletedAssetIds : []);
 
-      /**
-       * FIX 2: Verify Assets with HEAD Requests.
-       * Even if 'list()' finds the file, the CDN might still be propagating.
-       * Checking the status ensures we don't re-index a file that is actually gone.
-       */
+      // Verify assets exist and strictly filter out tombstoned assetIds
       const verifiedAssets = [];
       for (const ba of blobAssetsAll) {
         if (deleted.has(ba.assetId)) continue;
-
         const check = await fetch(ba.url, { method: 'HEAD', cache: 'no-store' });
         if (check.status !== 404) {
           verifiedAssets.push(ba);
@@ -136,7 +131,9 @@ export async function POST(req: Request): Promise<Response> {
       const existingById = new Map<string, PageAsset>();
       for (const a of (p.assets || [])) existingById.set(a.assetId, a);
 
+      // Final filter: never re-add tombstoned assetIds
       p.assets = verifiedAssets
+        .filter((ba) => !deleted.has(ba.assetId))
         .map((ba) => {
           const prev = existingById.get(ba.assetId);
           return {
