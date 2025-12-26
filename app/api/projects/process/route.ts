@@ -5,6 +5,7 @@ import { saveManifest, fetchManifestDirect, type ProjectManifest } from "@/app/l
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 60; // Allow up to 60 seconds for large PDFs
 
 type Body = {
   projectId?: string;
@@ -68,36 +69,44 @@ async function processWithDocAI(pdfBytes: Buffer): Promise<{ fullText: string; r
   const name = `projects/${projectId}/locations/${location}/processors/${processorId}`;
   const content = pdfBytes.toString("base64");
 
-  // First, do a quick request to find page count (process just page 1)
-  const [probe] = await client.processDocument({
-    name,
-    rawDocument: { content, mimeType: "application/pdf" },
-    skipHumanReview: true,
-    processOptions: {
-      individualPageSelector: { pages: [1] }
+  // Process the document - for PDFs over 15 pages, we need to chunk
+  // First try processing the whole document
+  try {
+    const [result] = await client.processDocument({
+      name,
+      rawDocument: { content, mimeType: "application/pdf" },
+      skipHumanReview: true
+    });
+
+    const raw = result as unknown;
+    const doc = (result.document ?? null) as { text?: unknown } | null;
+    const fullText = safeString(doc?.text);
+
+    return { fullText, raw };
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    
+    // If page limit exceeded, process in chunks
+    if (errMsg.includes("exceed the limit") || errMsg.includes("15")) {
+      return processInChunks(client, name, content);
     }
-  });
+    
+    throw err;
+  }
+}
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const probeDoc = (probe as any).document;
-  const totalPages = probeDoc?.pages?.length
-    ? Math.max(...(probeDoc.pages as Array<{ pageNumber?: number }>).map((p) => p.pageNumber ?? 1))
-    : 1;
-
-  // If we can't determine total pages, try to get it from the PDF directly
-  // For now, assume the probe gives us at least 1 page
-  // We'll process in chunks of 15 pages max
-
+async function processInChunks(
+  client: DocumentProcessorServiceClient,
+  name: string,
+  content: string
+): Promise<{ fullText: string; raw: unknown }> {
   const CHUNK_SIZE = 15;
   const allTexts: string[] = [];
   const allRaws: unknown[] = [];
-
-  // Calculate how many pages we actually have by checking if we got text
-  // We'll iterate until we get empty results
   let pageOffset = 1;
   let hasMorePages = true;
 
-  while (hasMorePages) {
+  while (hasMorePages && pageOffset <= 200) {
     const pages: number[] = [];
     for (let i = 0; i < CHUNK_SIZE; i++) {
       pages.push(pageOffset + i);
@@ -121,22 +130,15 @@ async function processWithDocAI(pdfBytes: Buffer): Promise<{ fullText: string; r
         allRaws.push(result);
       }
 
-      // Check if we got fewer pages than requested (meaning we've reached the end)
       const pagesReturned = Array.isArray(doc?.pages) ? doc.pages.length : 0;
       if (pagesReturned < CHUNK_SIZE) {
         hasMorePages = false;
       } else {
         pageOffset += CHUNK_SIZE;
       }
-
-      // Safety limit: don't process more than 200 pages
-      if (pageOffset > 200) {
-        hasMorePages = false;
-      }
     } catch (err) {
-      // If we get an error about page not existing, we've reached the end
       const errMsg = err instanceof Error ? err.message : String(err);
-      if (errMsg.includes("page") || errMsg.includes("INVALID_ARGUMENT")) {
+      if (errMsg.includes("page") || errMsg.includes("INVALID_ARGUMENT") || errMsg.includes("out of range")) {
         hasMorePages = false;
       } else {
         throw err;
