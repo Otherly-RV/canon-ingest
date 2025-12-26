@@ -86,11 +86,15 @@ export async function POST(req: Request): Promise<Response> {
       return NextResponse.json({ ok: false, error: `Page ${pageNumber} not found in manifest.pages` }, { status: 400 });
     }
 
+    const deleted = new Set<string>(Array.isArray(page.deletedAssetIds) ? page.deletedAssetIds : []);
+
     const existing = Array.isArray(page.assets) ? page.assets : [];
     const byId = new Map<string, PageAsset>();
     for (const e of existing) byId.set(e.assetId, e);
 
     for (const a of incoming) {
+      // Respect tombstones: never resurrect a deleted assetId.
+      if (deleted.has(a.assetId)) continue;
       const merged: PageAsset = {
         assetId: a.assetId,
         url: a.url,

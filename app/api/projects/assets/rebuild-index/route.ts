@@ -128,7 +128,10 @@ export async function POST(req: Request): Promise<Response> {
     let totalAssetsAfter = 0;
 
     for (const p of manifest.pages) {
-      const blobAssets = foundByPage.get(p.pageNumber) ?? [];
+      const blobAssetsAll = foundByPage.get(p.pageNumber) ?? [];
+
+      const deleted = new Set<string>(Array.isArray(p.deletedAssetIds) ? p.deletedAssetIds : []);
+      const blobAssets = blobAssetsAll.filter((ba) => !deleted.has(ba.assetId));
 
       const existing = Array.isArray(p.assets) ? p.assets : [];
       const existingById = new Map<string, PageAsset>();

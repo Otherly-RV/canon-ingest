@@ -12,6 +12,8 @@ type Body = {
   limitAssets?: number; // optional safety
 };
 
+type TagUpdate = { pageNumber: number; assetId: string; tags: string[]; rationale: string };
+
 function mustEnv(name: string): string {
   const v = process.env[name];
   if (!v || !String(v).trim()) throw new Error(`Missing ${name}`);
@@ -266,6 +268,9 @@ export async function POST(req: Request): Promise<Response> {
     // Default to a modern model name; you can override via env
     const GEMINI_MODEL = optEnv("GEMINI_MODEL", "gemini-2.0-flash");
 
+    // NOTE: We will *not* save this manifest directly at the end.
+    // Tagging can take time, and the user may delete assets while it's running.
+    // If we save the stale manifest, we can resurrect deleted assets.
     const manifest = await fetchJson<ProjectManifest>(manifestUrl);
 
     if (manifest.projectId !== projectId) {
@@ -288,15 +293,19 @@ export async function POST(req: Request): Promise<Response> {
 
     let totalConsidered = 0;
     let totalTagged = 0;
+    const updates: TagUpdate[] = [];
 
     for (const page of manifest.pages) {
       const pageNumber = page.pageNumber;
       const pageText = getPageTextFallback(fullText, pageNumber);
 
+      const deleted = new Set<string>(Array.isArray(page.deletedAssetIds) ? page.deletedAssetIds : []);
+
       const assets = Array.isArray(page.assets) ? page.assets : [];
       if (!assets.length) continue;
 
       for (const asset of assets) {
+        if (deleted.has(asset.assetId)) continue;
         totalConsidered += 1;
         if (limitAssets > 0 && totalConsidered > limitAssets) break;
 
@@ -313,15 +322,28 @@ export async function POST(req: Request): Promise<Response> {
           pageText
         });
 
-        (asset as PageAsset).tags = tags;
-        (asset as PageAsset).tagRationale = rationale;
+        updates.push({ pageNumber, assetId: asset.assetId, tags, rationale });
         totalTagged += 1;
       }
 
       if (limitAssets > 0 && totalConsidered > limitAssets) break;
     }
 
-    const newManifestUrl = await saveManifest(manifest);
+    // Re-fetch latest manifest and merge tag updates onto it, so we don't
+    // overwrite concurrent changes like deletions.
+    const latest = await fetchJson<ProjectManifest>(manifestUrl);
+
+    for (const u of updates) {
+      const p = latest.pages?.find((x) => x.pageNumber === u.pageNumber);
+      if (!p) continue;
+      if (Array.isArray(p.deletedAssetIds) && p.deletedAssetIds.includes(u.assetId)) continue;
+      const a = p.assets?.find((x) => x.assetId === u.assetId);
+      if (!a) continue;
+      (a as PageAsset).tags = u.tags;
+      (a as PageAsset).tagRationale = u.rationale;
+    }
+
+    const newManifestUrl = await saveManifest(latest);
 
     return NextResponse.json({
       ok: true,

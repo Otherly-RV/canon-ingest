@@ -63,6 +63,11 @@ export async function POST(req: Request): Promise<Response> {
     return NextResponse.json({ ok: false, error: `Page ${pageNumber} not found` }, { status: 400 });
   }
 
+  // Respect tombstones: never resurrect a deleted assetId.
+  if (Array.isArray(page.deletedAssetIds) && page.deletedAssetIds.includes(assetId)) {
+    return NextResponse.json({ ok: true, manifestUrl });
+  }
+
   if (!Array.isArray(page.assets)) page.assets = [];
 
   const idx = page.assets.findIndex((a) => a.assetId === assetId);
