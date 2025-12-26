@@ -1386,8 +1386,8 @@ export default function Page() {
         </div>
 
         {settingsOpen && (
-          <div style={{ padding: "0 14px 14px 14px", overflow: "hidden" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", overflow: "hidden" }}>
+          <div style={{ padding: "0 14px 14px 14px", overflow: "hidden", width: "100%", boxSizing: "border-box" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", overflow: "hidden", width: "100%" }}>
               <Tabs value={settingsTab} onChange={setSettingsTab} />
 
               <button
