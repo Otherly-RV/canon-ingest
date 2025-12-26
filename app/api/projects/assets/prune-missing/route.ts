@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { saveManifest, type ProjectManifest } from "@/app/lib/manifest";
+import { saveManifest, fetchManifestDirect, type ProjectManifest } from "@/app/lib/manifest";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,13 +18,6 @@ async function readErrorText(res: Response) {
   } catch {
     return `${res.status} ${res.statusText}`;
   }
-}
-
-async function fetchManifest(manifestUrlRaw: string): Promise<ProjectManifest> {
-  const url = `${baseUrl(manifestUrlRaw)}?v=${Date.now()}`;
-  const res = await fetch(url, { cache: "no-store" });
-  if (!res.ok) throw new Error(`Cannot fetch manifest (${res.status}): ${await readErrorText(res)}`);
-  return (await res.json()) as ProjectManifest;
 }
 
 async function existsDefinitely(url: string): Promise<"exists" | "missing" | "unknown"> {
@@ -54,7 +47,7 @@ export async function POST(req: Request): Promise<Response> {
       return NextResponse.json({ ok: false, error: "Missing projectId/manifestUrl" }, { status: 400 });
     }
 
-    const manifest = await fetchManifest(manifestUrl);
+    const manifest = await fetchManifestDirect(manifestUrl);
     if (manifest.projectId !== projectId) {
       return NextResponse.json({ ok: false, error: "projectId does not match manifest" }, { status: 400 });
     }
@@ -82,7 +75,7 @@ export async function POST(req: Request): Promise<Response> {
     }
 
     // Re-fetch latest manifest to avoid race conditions
-    const latest = await fetchManifest(manifestUrl);
+    const latest = await fetchManifestDirect(manifestUrl);
     if (latest.projectId !== projectId) {
       return NextResponse.json({ ok: false, error: "projectId does not match manifest on re-fetch" }, { status: 400 });
     }

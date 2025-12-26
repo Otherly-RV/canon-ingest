@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { list } from "@vercel/blob"; 
-import { saveManifest, type ProjectManifest, type PageAsset } from "@/app/lib/manifest";
+import { saveManifest, fetchManifestDirect, type ProjectManifest, type PageAsset } from "@/app/lib/manifest";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -14,29 +14,6 @@ type ListResult = {
   blobs: Array<{ url: string; pathname?: string }>;
   cursor?: string | null;
 };
-
-/**
- * FIX 1: Direct Origin Read
- * Instead of SDK 'get', we use fetch with headers that force Vercel 
- * to bypass the Edge Network and hit the blob storage directly.
- */
-async function fetchManifestDirect(url: string): Promise<ProjectManifest> {
-  const cacheBuster = `${url}${url.includes('?') ? '&' : '?'}v=${Date.now()}`;
-  
-  const res = await fetch(cacheBuster, { 
-    cache: "no-store",
-    headers: {
-      'Cache-Control': 'no-cache',
-      'Pragma': 'no-cache'
-    }
-  });
-
-  if (!res.ok) {
-    throw new Error(`Failed to read manifest directly: ${res.statusText}`);
-  }
-  
-  return (await res.json()) as ProjectManifest;
-}
 
 function parseAssetPath(pathname: string) {
   const m = pathname.match(/^projects\/[^/]+\/assets\/p(\d+)\/(p\d+-img\d+)/);

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { list } from "@vercel/blob";
-import { saveManifest, type ProjectManifest, type PageImage, type PageAsset, type AssetBBox } from "@/app/lib/manifest";
+import { saveManifest, fetchManifestDirect, type ProjectManifest, type PageImage, type PageAsset, type AssetBBox } from "@/app/lib/manifest";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -22,16 +22,6 @@ async function readErrorText(res: Response) {
   } catch {
     return `${res.status} ${res.statusText}`;
   }
-}
-
-async function fetchManifest(manifestUrlRaw: string): Promise<ProjectManifest> {
-  const url = baseUrl(manifestUrlRaw);
-  const res = await fetch(`${url}?v=${Date.now()}`, {
-    cache: "no-store",
-    headers: { "Cache-Control": "no-cache" }
-  });
-  if (!res.ok) throw new Error(`Cannot fetch manifest (${res.status}): ${await readErrorText(res)}`);
-  return (await res.json()) as ProjectManifest;
 }
 
 type ListResult = {
@@ -172,7 +162,7 @@ export async function POST(req: Request): Promise<Response> {
     }
 
     // Re-fetch latest manifest to avoid race conditions
-    const latest = await fetchManifest(manifestUrl);
+    const latest = await fetchManifestDirect(manifestUrl);
     if (latest.projectId !== projectId) {
       return NextResponse.json({ ok: false, error: "projectId does not match manifest on re-fetch" }, { status: 400 });
     }

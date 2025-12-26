@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { saveManifest, type ProjectManifest, type PageAsset } from "@/app/lib/manifest";
+import { saveManifest, fetchManifestDirect, type ProjectManifest, type PageAsset } from "@/app/lib/manifest";
 import { GoogleGenerativeAI, type GenerativeModel } from "@google/generative-ai";
 
 export const runtime = "nodejs";
@@ -271,7 +271,7 @@ export async function POST(req: Request): Promise<Response> {
     // NOTE: We will *not* save this manifest directly at the end.
     // Tagging can take time, and the user may delete assets while it's running.
     // If we save the stale manifest, we can resurrect deleted assets.
-    const manifest = await fetchJson<ProjectManifest>(manifestUrl);
+    const manifest = await fetchManifestDirect(manifestUrl);
 
     if (manifest.projectId !== projectId) {
       return NextResponse.json({ ok: false, error: "projectId does not match manifest" }, { status: 400 });
@@ -331,7 +331,7 @@ export async function POST(req: Request): Promise<Response> {
 
     // Re-fetch latest manifest and merge tag updates onto it, so we don't
     // overwrite concurrent changes like deletions.
-    const latest = await fetchJson<ProjectManifest>(manifestUrl);
+    const latest = await fetchManifestDirect(manifestUrl);
 
     for (const u of updates) {
       const p = latest.pages?.find((x) => x.pageNumber === u.pageNumber);
@@ -342,6 +342,12 @@ export async function POST(req: Request): Promise<Response> {
       (a as PageAsset).tags = u.tags;
       (a as PageAsset).tagRationale = u.rationale;
     }
+
+    // Add debug log
+    if (!Array.isArray(latest.debugLog)) latest.debugLog = [];
+    const timestamp = new Date().toISOString();
+    latest.debugLog.unshift(`[${timestamp}] AI-TAG: Tagged ${totalTagged} assets (considered ${totalConsidered}). Model: ${GEMINI_MODEL}.`);
+    if (latest.debugLog.length > 50) latest.debugLog = latest.debugLog.slice(0, 50);
 
     const newManifestUrl = await saveManifest(latest);
 
