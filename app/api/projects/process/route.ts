@@ -66,25 +66,86 @@ async function processWithDocAI(pdfBytes: Buffer): Promise<{ fullText: string; r
   });
 
   const name = `projects/${projectId}/locations/${location}/processors/${processorId}`;
+  const content = pdfBytes.toString("base64");
 
-  const [result] = await client.processDocument({
+  // First, do a quick request to find page count (process just page 1)
+  const [probe] = await client.processDocument({
     name,
-    rawDocument: {
-      content: pdfBytes.toString("base64"),
-      mimeType: "application/pdf"
-    },
+    rawDocument: { content, mimeType: "application/pdf" },
     skipHumanReview: true,
     processOptions: {
-      ocrConfig: {
-        // Imageless mode increases page limit from 15 to 30
-        disableCharacterBoxesDetection: true
-      }
+      individualPageSelector: { pages: [1] }
     }
   });
 
-  const raw = result as unknown;
-  const doc = (result.document ?? null) as { text?: unknown } | null;
-  const fullText = safeString(doc?.text);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const probeDoc = (probe as any).document;
+  const totalPages = probeDoc?.pages?.length
+    ? Math.max(...(probeDoc.pages as Array<{ pageNumber?: number }>).map((p) => p.pageNumber ?? 1))
+    : 1;
+
+  // If we can't determine total pages, try to get it from the PDF directly
+  // For now, assume the probe gives us at least 1 page
+  // We'll process in chunks of 15 pages max
+
+  const CHUNK_SIZE = 15;
+  const allTexts: string[] = [];
+  const allRaws: unknown[] = [];
+
+  // Calculate how many pages we actually have by checking if we got text
+  // We'll iterate until we get empty results
+  let pageOffset = 1;
+  let hasMorePages = true;
+
+  while (hasMorePages) {
+    const pages: number[] = [];
+    for (let i = 0; i < CHUNK_SIZE; i++) {
+      pages.push(pageOffset + i);
+    }
+
+    try {
+      const [result] = await client.processDocument({
+        name,
+        rawDocument: { content, mimeType: "application/pdf" },
+        skipHumanReview: true,
+        processOptions: {
+          individualPageSelector: { pages }
+        }
+      });
+
+      const doc = (result.document ?? null) as { text?: unknown; pages?: unknown[] } | null;
+      const chunkText = safeString(doc?.text);
+
+      if (chunkText.trim()) {
+        allTexts.push(chunkText);
+        allRaws.push(result);
+      }
+
+      // Check if we got fewer pages than requested (meaning we've reached the end)
+      const pagesReturned = Array.isArray(doc?.pages) ? doc.pages.length : 0;
+      if (pagesReturned < CHUNK_SIZE) {
+        hasMorePages = false;
+      } else {
+        pageOffset += CHUNK_SIZE;
+      }
+
+      // Safety limit: don't process more than 200 pages
+      if (pageOffset > 200) {
+        hasMorePages = false;
+      }
+    } catch (err) {
+      // If we get an error about page not existing, we've reached the end
+      const errMsg = err instanceof Error ? err.message : String(err);
+      if (errMsg.includes("page") || errMsg.includes("INVALID_ARGUMENT")) {
+        hasMorePages = false;
+      } else {
+        throw err;
+      }
+    }
+  }
+
+  const fullText = allTexts.join("\n\n");
+  const raw = allRaws.length === 1 ? allRaws[0] : { chunks: allRaws };
 
   return { fullText, raw };
 }
