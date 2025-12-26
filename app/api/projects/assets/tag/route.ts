@@ -169,7 +169,11 @@ function buildPrompt(args: {
 }
 
 async function fetchImageAsBase64(url: string): Promise<{ base64: string; mimeType: string }> {
-  const res = await fetch(`${baseUrl(url)}?v=${Date.now()}`, { cache: "no-store" });
+  // Don't use baseUrl() here - Vercel Blob URLs need their query params
+  const fetchUrl = new URL(url);
+  fetchUrl.searchParams.set("v", String(Date.now()));
+  
+  const res = await fetch(fetchUrl.toString(), { cache: "no-store" });
   if (!res.ok) throw new Error(`Failed to fetch image: ${res.status}`);
   
   const contentType = res.headers.get("content-type") || "image/png";
