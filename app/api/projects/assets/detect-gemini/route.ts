@@ -176,7 +176,7 @@ export async function POST(req: Request): Promise<Response> {
     }
 
     const GEMINI_API_KEY = mustEnv("GEMINI_API_KEY");
-    const GEMINI_MODEL = optEnv("GEMINI_DETECT_MODEL", optEnv("GEMINI_MODEL", "gemini-3.0-pro"));
+    const GEMINI_MODEL = optEnv("GEMINI_DETECT_MODEL", optEnv("GEMINI_MODEL", "gemini-3-pro-preview"));
 
     const manifest = await fetchManifestDirect(manifestUrl);
     if (manifest.projectId !== projectId) {
