@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { list } from "@vercel/blob";
+import { list, get } from "@vercel/blob"; // Added 'get' for direct origin reads
 import { saveManifest, type ProjectManifest, type PageAsset, type AssetBBox } from "@/app/lib/manifest";
 
 export const runtime = "nodejs";
@@ -15,34 +15,26 @@ type ListResult = {
   cursor?: string | null;
 };
 
-function baseUrl(u: string) {
-  const url = new URL(u);
-  return `${url.origin}${url.pathname}`;
-}
-
-async function readErrorText(res: Response) {
+/**
+ * FIX 1: Bypass the CDN/Edge Cache.
+ * Reading directly from the storage origin ensures we don't start with 
+ * a stale version of the manifest.
+ */
+async function fetchManifestDirect(url: string): Promise<ProjectManifest> {
   try {
-    const t = await res.text();
-    return t || `${res.status} ${res.statusText}`;
-  } catch {
-    return `${res.status} ${res.statusText}`;
+    const { body } = await get(url); // Direct SDK read from Blob origin
+    const content = await new Response(body).json();
+    return content as ProjectManifest;
+  } catch (error) {
+    throw new Error(`Failed to read manifest directly from Blob storage: ${error}`);
   }
 }
 
-async function fetchManifest(manifestUrlRaw: string): Promise<ProjectManifest> {
-  const url = `${baseUrl(manifestUrlRaw)}?v=${Date.now()}`;
-  const res = await fetch(url, { cache: "no-store" });
-  if (!res.ok) throw new Error(`Cannot fetch manifest (${res.status}): ${await readErrorText(res)}`);
-  return (await res.json()) as ProjectManifest;
-}
-
 function parseAssetPath(pathname: string) {
-  // projects/{pid}/assets/p{N}/p{N}-imgXX*.png  -> assetId = p{N}-imgXX
   const m = pathname.match(/^projects\/[^/]+\/assets\/p(\d+)\/(p\d+-img\d+)/);
   if (!m) return null;
   const pageNumber = Number(m[1]);
   const assetId = m[2];
-  if (!Number.isFinite(pageNumber)) return null;
   return { pageNumber, assetId };
 }
 
@@ -62,16 +54,15 @@ export async function POST(req: Request): Promise<Response> {
       return NextResponse.json({ ok: false, error: "Missing projectId/manifestUrl" }, { status: 400 });
     }
 
-    const manifest = await fetchManifest(manifestUrl);
+    // Use the direct fetch instead of URL fetch to avoid CDN ghosting
+    const manifest = await fetchManifestDirect(manifestUrl);
+    
     if (manifest.projectId !== projectId) {
       return NextResponse.json({ ok: false, error: "projectId does not match manifest" }, { status: 400 });
     }
 
     if (!Array.isArray(manifest.pages)) manifest.pages = [];
-
     const prefix = `projects/${projectId}/assets/`;
-
-    // Build authoritative map from Blob: (pageNumber::assetId) -> url
     const found = new Map<string, { pageNumber: number; assetId: string; url: string }>();
 
     let cursor: string | undefined = undefined;
@@ -79,21 +70,18 @@ export async function POST(req: Request): Promise<Response> {
       const page = (await list({ prefix, limit: 1000, cursor })) as unknown as ListResult;
 
       for (const b of page.blobs) {
-        const pathname = typeof b.pathname === "string" ? b.pathname : "";
+        const pathname = b.pathname || "";
         const parsed = parseAssetPath(pathname);
         if (!parsed) continue;
 
-        const url = typeof b.url === "string" ? b.url : "";
+        const url = b.url || "";
         if (!url) continue;
 
         const key = `${parsed.pageNumber}::${parsed.assetId}`;
-
-        // choose a deterministic winner if duplicates exist
         const prev = found.get(key);
         if (!prev) found.set(key, { pageNumber: parsed.pageNumber, assetId: parsed.assetId, url });
         else {
-          const pick =
-            url.length > prev.url.length ? url : url.length < prev.url.length ? prev.url : url > prev.url ? url : prev.url;
+          const pick = url.length >= prev.url.length ? url : prev.url;
           found.set(key, { pageNumber: parsed.pageNumber, assetId: parsed.assetId, url: pick });
         }
       }
@@ -103,7 +91,6 @@ export async function POST(req: Request): Promise<Response> {
       if (!cursor) break;
     }
 
-    // pageNumber -> [{assetId,url}]
     const foundByPage = new Map<number, Array<{ assetId: string; url: string }>>();
     for (const item of found.values()) {
       const arr = foundByPage.get(item.pageNumber) ?? [];
@@ -111,47 +98,54 @@ export async function POST(req: Request): Promise<Response> {
       foundByPage.set(item.pageNumber, arr);
     }
 
-    // Ensure manifest has page entries for any pages that exist in Blob
-    const existingPages = new Set<number>(manifest.pages.map((p) => p.pageNumber));
     for (const pageNumber of foundByPage.keys()) {
-      if (!existingPages.has(pageNumber)) {
+      if (!manifest.pages.find(p => p.pageNumber === pageNumber)) {
         manifest.pages.push({ pageNumber, url: "", width: 0, height: 0, assets: [] });
       }
     }
 
-    // Keep pages sorted
     manifest.pages.sort((a, b) => a.pageNumber - b.pageNumber);
 
-    // Replace assets for EVERY page (authoritative). If Blob has none -> assets becomes []
     let pagesTouched = 0;
-    let removedStale = 0;
     let totalAssetsAfter = 0;
 
     for (const p of manifest.pages) {
       const blobAssetsAll = foundByPage.get(p.pageNumber) ?? [];
-
       const deleted = new Set<string>(Array.isArray(p.deletedAssetIds) ? p.deletedAssetIds : []);
-      const blobAssets = blobAssetsAll.filter((ba) => !deleted.has(ba.assetId));
 
-      const existing = Array.isArray(p.assets) ? p.assets : [];
+      /**
+       * FIX 2: Verify Assets with HEAD Requests.
+       * Even if 'list()' finds the file, the CDN might still be propagating the deletion.
+       * Checking the status ensures we don't re-index a file that is actually gone.
+       */
+      const verifiedAssets = [];
+      for (const ba of blobAssetsAll) {
+        if (deleted.has(ba.assetId)) continue;
+
+        // Fast HEAD request to verify file existence
+        const check = await fetch(ba.url, { method: 'HEAD', cache: 'no-store' });
+        if (check.status !== 404) {
+          verifiedAssets.push(ba);
+        }
+      }
+
       const existingById = new Map<string, PageAsset>();
-      for (const a of existing) existingById.set(a.assetId, a);
+      for (const a of (p.assets || [])) existingById.set(a.assetId, a);
 
-      const nextAssets: PageAsset[] = blobAssets
+      p.assets = verifiedAssets
         .map((ba) => {
           const prev = existingById.get(ba.assetId);
-          const bbox: AssetBBox = prev?.bbox ?? { x: 0, y: 0, w: 0, h: 0 };
-          const tags = Array.isArray(prev?.tags) ? prev!.tags : undefined;
-          return { assetId: ba.assetId, url: ba.url, bbox, tags };
+          return {
+            assetId: ba.assetId,
+            url: ba.url,
+            bbox: prev?.bbox ?? { x: 0, y: 0, w: 0, h: 0 },
+            tags: prev?.tags
+          };
         })
         .sort((a, b) => a.assetId.localeCompare(b.assetId));
 
-      // count stale removals (manifest had more than blob)
-      if (existing.length > nextAssets.length) removedStale += existing.length - nextAssets.length;
-
-      p.assets = nextAssets;
       pagesTouched += 1;
-      totalAssetsAfter += nextAssets.length;
+      totalAssetsAfter += p.assets.length;
     }
 
     const newManifestUrl = await saveManifest(manifest);
@@ -159,9 +153,7 @@ export async function POST(req: Request): Promise<Response> {
     return NextResponse.json({
       ok: true,
       manifestUrl: newManifestUrl,
-      foundKeys: found.size,
       pagesTouched,
-      removedStale,
       totalAssetsAfter
     });
   } catch (e) {
