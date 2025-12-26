@@ -285,6 +285,14 @@ export async function POST(req: Request): Promise<Response> {
       return NextResponse.json({ ok: false, error: "No pages in manifest" }, { status: 400 });
     }
 
+    // Count how many assets already have tags (before we start)
+    let alreadyTaggedAtStart = 0;
+    for (const p of manifest.pages) {
+      for (const a of p.assets ?? []) {
+        if (Array.isArray(a.tags) && a.tags.length > 0) alreadyTaggedAtStart++;
+      }
+    }
+
     // Full text (fallback) — later you can store per-page text in DocAI JSON
     const fullText = await fetchText(manifest.extractedText.url);
 
@@ -333,6 +341,14 @@ export async function POST(req: Request): Promise<Response> {
     // overwrite concurrent changes like deletions.
     const latest = await fetchManifestDirect(manifestUrl);
 
+    // Count existing tags before merge
+    let existingTaggedCount = 0;
+    for (const p of latest.pages ?? []) {
+      for (const a of p.assets ?? []) {
+        if (Array.isArray(a.tags) && a.tags.length > 0) existingTaggedCount++;
+      }
+    }
+
     for (const u of updates) {
       const p = latest.pages?.find((x) => x.pageNumber === u.pageNumber);
       if (!p) continue;
@@ -346,7 +362,7 @@ export async function POST(req: Request): Promise<Response> {
     // Add debug log
     if (!Array.isArray(latest.debugLog)) latest.debugLog = [];
     const timestamp = new Date().toISOString();
-    latest.debugLog.unshift(`[${timestamp}] AI-TAG: Tagged ${totalTagged} assets (considered ${totalConsidered}). Model: ${GEMINI_MODEL}.`);
+    latest.debugLog.unshift(`[${timestamp}] AI-TAG: Tagged ${totalTagged} new. At start: ${alreadyTaggedAtStart} had tags. After re-fetch: ${existingTaggedCount} had tags. Model: ${GEMINI_MODEL}.`);
     if (latest.debugLog.length > 50) latest.debugLog = latest.debugLog.slice(0, 50);
 
     const newManifestUrl = await saveManifest(latest);
@@ -356,6 +372,8 @@ export async function POST(req: Request): Promise<Response> {
       manifestUrl: newManifestUrl,
       considered: totalConsidered,
       tagged: totalTagged,
+      alreadyTaggedAtStart,
+      existingTaggedAfterRefetch: existingTaggedCount,
       model: GEMINI_MODEL
     });
   } catch (e) {
