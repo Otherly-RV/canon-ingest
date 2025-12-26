@@ -72,6 +72,13 @@ async function processWithDocAI(pdfBytes: Buffer): Promise<{ fullText: string; r
     rawDocument: {
       content: pdfBytes.toString("base64"),
       mimeType: "application/pdf"
+    },
+    skipHumanReview: true,
+    processOptions: {
+      ocrConfig: {
+        // Imageless mode increases page limit from 15 to 30
+        disableCharacterBoxesDetection: true
+      }
     }
   });
 
