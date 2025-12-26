@@ -1,4 +1,4 @@
-import { put } from "@vercel/blob";
+import { put, head } from "@vercel/blob";
 
 export type ProjectSettings = {
   aiRules: string;
@@ -91,16 +91,35 @@ export async function saveManifest(manifest: ProjectManifest) {
 
 /**
  * Force-fetch manifest bypassing Vercel Edge cache.
+ * Uses downloadUrl from blob metadata which should be more reliable.
  */
 export async function fetchManifestDirect(url: string): Promise<ProjectManifest> {
   const u = new URL(url);
   const cleanUrl = `${u.origin}${u.pathname}`;
-  const cacheBuster = `${cleanUrl}?v=${Date.now()}`;
+  
+  // Try using blob head to get fresh download URL
+  try {
+    const blobInfo = await head(cleanUrl);
+    if (blobInfo?.downloadUrl) {
+      const res = await fetch(`${blobInfo.downloadUrl}?_=${Date.now()}`, { 
+        cache: "no-store",
+        headers: { 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache' }
+      });
+      if (res.ok) {
+        return (await res.json()) as ProjectManifest;
+      }
+    }
+  } catch {
+    // Fall through to direct fetch
+  }
+  
+  // Fallback: direct fetch with cache busting
+  const cacheBuster = `${cleanUrl}?v=${Date.now()}&r=${Math.random()}`;
   
   const res = await fetch(cacheBuster, { 
     cache: "no-store",
     headers: {
-      'Cache-Control': 'no-cache',
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
       'Pragma': 'no-cache'
     }
   });

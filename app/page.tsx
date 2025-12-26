@@ -567,11 +567,14 @@ export default function Page() {
 
       if (!r.ok) throw new Error(await readErrorText(r));
 
-      const j = (await r.json()) as { ok: boolean; manifestUrl?: string; error?: string };
+      const j = (await r.json()) as { ok: boolean; manifestUrl?: string; error?: string; tagged?: number };
       if (!j.ok || !j.manifestUrl) throw new Error(j.error || "Tagging failed (bad response)");
 
       setManifestUrl(j.manifestUrl);
       setUrlParams(projectId, j.manifestUrl);
+      
+      // Wait for CDN to propagate, then reload with retry
+      await new Promise((resolve) => setTimeout(resolve, 1000));
       await loadManifest(j.manifestUrl);
     } catch (e) {
       setLastError(e instanceof Error ? e.message : String(e));
@@ -730,17 +733,14 @@ export default function Page() {
       const j = (await r.json().catch(() => null)) as { ok?: boolean; manifestUrl?: string; error?: string } | null;
       if (!r.ok || !j?.ok || !j.manifestUrl) throw new Error(j?.error || `Delete failed (${r.status})`);
 
+      // Update URL but DO NOT re-fetch - trust the optimistic update
+      // Re-fetching often returns stale CDN data that resurrects the deleted asset
       setManifestUrl(j.manifestUrl);
       setUrlParams(projectId, j.manifestUrl);
-      
-      // Small delay before re-fetching to let Vercel propagate
-      await new Promise((resolve) => setTimeout(resolve, 300));
-      await loadManifest(j.manifestUrl);
-      await refreshProjects();
     } catch (e) {
       setLastError(e instanceof Error ? e.message : String(e));
       // On error, reload to get true state
-      await new Promise((resolve) => setTimeout(resolve, 300));
+      await new Promise((resolve) => setTimeout(resolve, 500));
       await loadManifest(manifestUrl);
     } finally {
       deletingRef.current.delete(key);
