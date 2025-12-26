@@ -301,18 +301,30 @@ export default function Page() {
     setBusy("Uploading SOURCE...");
 
     try {
-      const p = projectId && manifestUrl ? { projectId, manifestUrl } : await createProject();
+      // Always create a new project for each upload
+      const p = await createProject();
 
-      const form = new FormData();
-      form.append("file", file);
-      form.append("projectId", p.projectId);
-      form.append("manifestUrl", p.manifestUrl);
+      // Use client-side upload to bypass serverless function size limits
+      const blob = await upload(`projects/${p.projectId}/source/source.pdf`, file, {
+        access: "public",
+        handleUploadUrl: "/api/blob"
+      });
 
-      const r = await fetch("/api/projects/upload-source", { method: "POST", body: form });
-      if (!r.ok) throw new Error(`Upload failed: ${await readErrorText(r)}`);
+      // Record the PDF URL in the manifest
+      const r = await fetch("/api/projects/record-source", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          projectId: p.projectId,
+          manifestUrl: p.manifestUrl,
+          sourcePdfUrl: blob.url,
+          filename: file.name
+        })
+      });
+      if (!r.ok) throw new Error(`Record source failed: ${await readErrorText(r)}`);
 
       const j = (await r.json()) as { ok: boolean; manifestUrl?: string; error?: string };
-      if (!j.ok || !j.manifestUrl) throw new Error(j.error || "Upload failed (bad response)");
+      if (!j.ok || !j.manifestUrl) throw new Error(j.error || "Record source failed (bad response)");
 
       setManifestUrl(j.manifestUrl);
       setUrlParams(p.projectId, j.manifestUrl);
