@@ -115,6 +115,13 @@ export async function POST(req: Request): Promise<Response> {
       }
     }
 
+    // Add debug log
+    if (!Array.isArray(latest.debugLog)) latest.debugLog = [];
+    const timestamp = new Date().toISOString();
+    latest.debugLog.unshift(`[${timestamp}] DELETE asset ${assetId} (page ${pageNumber}). Removed ${uniqUrls.length} blobs.`);
+    // Keep log size manageable
+    if (latest.debugLog.length > 50) latest.debugLog = latest.debugLog.slice(0, 50);
+
     const newManifestUrl = await saveManifest(latest);
 
     return NextResponse.json({

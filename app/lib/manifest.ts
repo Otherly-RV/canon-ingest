@@ -55,6 +55,8 @@ export type ProjectManifest = {
   settings: ProjectSettings;
 
   status: "empty" | "uploaded" | "processed";
+
+  debugLog?: string[];
 };
 
 export function newManifest(projectId: string): ProjectManifest {

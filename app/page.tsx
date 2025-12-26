@@ -1197,6 +1197,19 @@ export default function Page() {
             </div>
             <div style={{ fontSize: 12, wordBreak: "break-all" }}>{manifestUrl || "—"}</div>
 
+            {Array.isArray(manifest?.debugLog) && manifest.debugLog.length > 0 && (
+              <div style={{ marginTop: 14, borderTop: "1px solid #eee", paddingTop: 10 }}>
+                <div style={{ fontWeight: 600, marginBottom: 4 }}>Background Log</div>
+                <div style={{ maxHeight: 200, overflowY: "auto", background: "#f5f5f5", padding: 8, borderRadius: 6 }}>
+                  {manifest.debugLog.map((line, i) => (
+                    <div key={i} style={{ fontSize: 11, fontFamily: "monospace", marginBottom: 2 }}>
+                      {line}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             <div style={{ marginTop: 10 }}>
               <span style={{ opacity: 0.7 }}>sourcePdf:</span>
             </div>
