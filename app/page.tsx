@@ -462,12 +462,12 @@ export default function Page() {
     setLastError("");
 
     if (!projectId || !manifestUrl) return setLastError("Missing projectId/manifestUrl");
-    if (!manifest.pages?.length) return setLastError("No page PNGs");
+    if (!manifest?.pages?.length) return setLastError("No page PNGs");
     if (busy || splitProgress.running) return;
 
     const detectPath = options?.detectPath || "/api/projects/assets/detect";
     setBusy(options?.busyLabel || "Splitting...");
-    setSplitProgress({ running: true, page: 0, totalPages: manifest.pages.length, assetsUploaded: 0 });
+    setSplitProgress({ running: true, page: 0, totalPages: manifest?.pages?.length ?? 0, assetsUploaded: 0 });
 
     try {
       const detectRes = await fetch(detectPath, {
@@ -491,7 +491,7 @@ export default function Page() {
         byPage.set(p.pageNumber, Array.isArray(p.boxes) ? p.boxes : []);
       }
 
-      const pages = manifest.pages;
+      const pages = manifest?.pages ?? [];
 
       for (const page of pages) {
         setSplitProgress((s) => ({ ...s, page: page.pageNumber }));
