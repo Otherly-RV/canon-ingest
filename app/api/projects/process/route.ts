@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { put } from "@vercel/blob";
 import { DocumentProcessorServiceClient } from "@google-cloud/documentai";
-import { saveManifest, fetchManifestDirect, type ProjectManifest } from "@/app/lib/manifest";
+import { saveManifest, fetchManifestDirect } from "@/app/lib/manifest";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
