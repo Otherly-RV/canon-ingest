@@ -969,7 +969,7 @@ export default function Page() {
             onClick={() => fileRef.current?.click()}
             style={{ border: "1px solid #000", background: "#fff", padding: "10px 12px", borderRadius: 12 }}
           >
-            Upload SOURCE
+            1. Load Source
           </button>
 
           <button
@@ -985,7 +985,7 @@ export default function Page() {
               opacity: manifest?.sourcePdf?.url && !busy ? 1 : 0.4
             }}
           >
-            Process Text
+            2. Process Text
           </button>
 
           <button
@@ -1001,7 +1001,7 @@ export default function Page() {
               opacity: manifest?.extractedText?.url && !busy ? 1 : 0.4
             }}
           >
-            {textLoading ? "Loading..." : "View Text"}
+            {textLoading ? "Loading..." : "3. View Text"}
           </button>
 
           <button
@@ -1017,7 +1017,7 @@ export default function Page() {
               opacity: manifest?.sourcePdf?.url && !busy ? 1 : 0.4
             }}
           >
-            Rasterize PNGs
+            4. Rasterize PNGs
           </button>
 
           <button
@@ -1033,7 +1033,7 @@ export default function Page() {
               opacity: manifest?.docAiJson?.url && manifest?.pages?.length && !busy ? 1 : 0.4
             }}
           >
-            Split images
+            5. Split Images
           </button>
 
           <button
