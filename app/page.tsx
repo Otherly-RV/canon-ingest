@@ -10,6 +10,7 @@ type PageAsset = {
   url: string;
   bbox: AssetBBox;
   tags?: string[];
+  tagRationale?: string;
 };
 
 type Manifest = {
@@ -26,6 +27,7 @@ type Manifest = {
     height: number;
     tags?: string[];
     assets?: PageAsset[];
+    deletedAssetIds?: string[];
   }>;
   settings: {
     aiRules: string;
@@ -671,7 +673,9 @@ export default function Page() {
         pages: prev.pages.map((p) => {
           if (p.pageNumber !== pageNumber) return p;
           const assets = Array.isArray(p.assets) ? p.assets : [];
-          return { ...p, assets: assets.filter((a) => a.assetId !== assetId) };
+          const deleted = Array.isArray(p.deletedAssetIds) ? p.deletedAssetIds : [];
+          const nextDeleted = deleted.includes(assetId) ? deleted : [...deleted, assetId];
+          return { ...p, assets: assets.filter((a) => a.assetId !== assetId), deletedAssetIds: nextDeleted };
         })
       };
     });
