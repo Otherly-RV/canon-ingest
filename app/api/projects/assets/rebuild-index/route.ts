@@ -12,12 +12,17 @@ export const dynamic = "force-dynamic";
 type Body = {
   projectId?: string;
   manifestUrl?: string;
-  pngOnly?: boolean; // optional: default true
+  pngOnly?: boolean; // optional, default true
 };
 
 type ListResult = {
   blobs: Array<{ url: string; pathname?: string }>;
   cursor?: string | null;
+};
+
+// Extend your page shape locally to include tombstones safely without `any`
+type ManifestPageWithDeletes = ProjectManifest["pages"][number] & {
+  deletedAssetIds?: string[];
 };
 
 function jsonError(message: string, status = 400) {
@@ -26,7 +31,7 @@ function jsonError(message: string, status = 400) {
 
 /**
  * Read manifest with no-store + cachebuster.
- * This does NOT "guarantee origin"; it just avoids Next/browsers caching the response.
+ * NOTE: this avoids Next/browsers caching; it does not guarantee bypassing edge caches.
  */
 async function readManifest(manifestUrl: string): Promise<ProjectManifest> {
   const url = `${manifestUrl}${manifestUrl.includes("?") ? "&" : "?"}v=${Date.now()}`;
@@ -45,9 +50,10 @@ async function readManifest(manifestUrl: string): Promise<ProjectManifest> {
 }
 
 function parseAssetPath(pathname: string) {
-  // expected: projects/{projectId}/assets/p{page}/p{page}-img{n}.png
-  // keep it tolerant: capture page number and assetId only
-  const m = pathname.match(/^projects\/[^/]+\/assets\/p(\d+)\/(p\d+-img\d+)(\.[a-zA-Z0-9]+)?$/);
+  // projects/{projectId}/assets/p{page}/p{page}-img{n}.png
+  const m = pathname.match(
+    /^projects\/[^/]+\/assets\/p(\d+)\/(p\d+-img\d+)(\.[a-zA-Z0-9]+)?$/
+  );
   if (!m) return null;
   return {
     pageNumber: Number(m[1]),
@@ -57,8 +63,7 @@ function parseAssetPath(pathname: string) {
 }
 
 function pickPreferredUrl(a: string, b: string) {
-  // If you ever have duplicates, pick deterministically.
-  // Using lexicographic max is stable and tends to prefer longer/suffixed URLs.
+  // stable deterministic choice for duplicates
   return a >= b ? a : b;
 }
 
@@ -89,7 +94,10 @@ export async function POST(req: Request): Promise<Response> {
 
     // --- 1) List blobs and build a map page->assetId->url ---
     const prefix = `projects/${projectId}/assets/`;
-    const found = new Map<string, { pageNumber: number; assetId: string; url: string }>();
+    const found = new Map<
+      string,
+      { pageNumber: number; assetId: string; url: string }
+    >();
 
     let cursor: string | undefined = undefined;
     for (;;) {
@@ -130,43 +138,56 @@ export async function POST(req: Request): Promise<Response> {
       foundByPage.set(item.pageNumber, arr);
     }
 
-    // --- 2) Ensure manifest has page entries for found pages (but don't create random garbage) ---
+    // --- 2) Ensure manifest has page entries for found pages ---
     for (const pageNumber of foundByPage.keys()) {
       if (!manifest.pages.some((p) => p.pageNumber === pageNumber)) {
-        manifest.pages.push({ pageNumber, url: "", width: 0, height: 0, assets: [], deletedAssetIds: [] });
+        // create a minimal page entry; include deletedAssetIds explicitly
+        manifest.pages.push({
+          pageNumber,
+          url: "",
+          width: 0,
+          height: 0,
+          assets: [],
+          deletedAssetIds: [],
+        } as ManifestPageWithDeletes);
       }
     }
+
     manifest.pages.sort((a, b) => a.pageNumber - b.pageNumber);
 
-    // --- 3) Rebuild each page assets while respecting tombstones and preserving bbox/tags ---
-    for (const p of manifest.pages) {
+    // --- 3) Rebuild each page while respecting tombstones and preserving bbox/tags ---
+    manifest.pages = manifest.pages.map((rawPage) => {
+      const p = rawPage as ManifestPageWithDeletes;
+
       const blobAssetsAll = foundByPage.get(p.pageNumber) ?? [];
 
-      const deleted = new Set<string>(
-        Array.isArray((p as any).deletedAssetIds) ? (p as any).deletedAssetIds : []
-      );
+      const deletedAssetIds = Array.isArray(p.deletedAssetIds) ? p.deletedAssetIds : [];
+      const deleted = new Set<string>(deletedAssetIds);
 
       const existingById = new Map<string, PageAsset>();
       for (const a of p.assets || []) existingById.set(a.assetId, a);
 
-      // filter tombstoned
       const blobAssets = blobAssetsAll.filter((ba) => !deleted.has(ba.assetId));
 
-      p.assets = blobAssets
+      const rebuiltAssets: PageAsset[] = blobAssets
         .map((ba) => {
           const prev = existingById.get(ba.assetId);
-          return {
+          const nextAsset: PageAsset = {
             assetId: ba.assetId,
             url: ba.url,
             bbox: prev?.bbox ?? { x: 0, y: 0, w: 0, h: 0 },
             tags: prev?.tags,
-          } as PageAsset;
+          };
+          return nextAsset;
         })
         .sort((a, b) => a.assetId.localeCompare(b.assetId));
 
-      // keep deletedAssetIds normalized
-      (p as any).deletedAssetIds = Array.from(deleted).sort();
-    }
+      return {
+        ...p,
+        assets: rebuiltAssets,
+        deletedAssetIds: Array.from(deleted).sort(),
+      };
+    });
 
     const newManifestUrl = await saveManifest(manifest);
 
