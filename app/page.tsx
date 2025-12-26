@@ -1019,69 +1019,79 @@ export default function Page() {
 
         {settingsOpen && (
           <div style={{ padding: "0 14px 14px 14px" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <Tabs value={settingsTab} onChange={setSettingsTab} />
+            <div
+              style={{
+                marginTop: 8,
+                border: "1px solid #000",
+                borderRadius: 12,
+                padding: 12,
+                background: "#fff"
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <Tabs value={settingsTab} onChange={setSettingsTab} />
+                </div>
+
+                <button
+                  type="button"
+                  disabled={settingsBusy || !projectId || !manifestUrl}
+                  onClick={() => void saveSettings()}
+                  style={{
+                    border: "1px solid #000",
+                    background: "#000",
+                    color: "#fff",
+                    padding: "8px 10px",
+                    borderRadius: 10,
+                    opacity: settingsBusy || !projectId || !manifestUrl ? 0.5 : 1,
+                    cursor: settingsBusy || !projectId || !manifestUrl ? "not-allowed" : "pointer",
+                    fontSize: 13,
+                    fontWeight: 800,
+                    whiteSpace: "nowrap"
+                  }}
+                >
+                  {settingsBusy ? "Saving..." : "Save"}
+                </button>
               </div>
 
-              <button
-                type="button"
-                disabled={settingsBusy || !projectId || !manifestUrl}
-                onClick={() => void saveSettings()}
-                style={{
-                  border: "1px solid #000",
-                  background: "#000",
-                  color: "#fff",
-                  padding: "8px 10px",
-                  borderRadius: 10,
-                  opacity: settingsBusy || !projectId || !manifestUrl ? 0.5 : 1,
-                  cursor: settingsBusy || !projectId || !manifestUrl ? "not-allowed" : "pointer",
-                  fontSize: 13,
-                  fontWeight: 800,
-                  whiteSpace: "nowrap"
-                }}
-              >
-                {settingsBusy ? "Saving..." : "Save"}
-              </button>
-            </div>
-
-            {settingsError && (
-              <div style={{ marginTop: 10, border: "1px solid #000", borderRadius: 12, padding: 10 }}>
-                <div style={{ fontWeight: 800, fontSize: 13 }}>Error</div>
-                <div style={{ marginTop: 6, fontSize: 13, whiteSpace: "pre-wrap" }}>{settingsError}</div>
-              </div>
-            )}
-
-            <div style={{ marginTop: 12 }}>
-              {settingsTab === "ai" ? (
-                <textarea
-                  value={aiRulesDraft}
-                  onChange={(e) => setAiRulesDraft(e.target.value)}
-                  style={{
-                    width: "100%",
-                    minHeight: 180,
-                    border: "1px solid rgba(0,0,0,0.35)",
-                    borderRadius: 12,
-                    padding: 12,
-                    fontSize: 13,
-                    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
-                  }}
-                />
-              ) : (
-                <textarea
-                  value={taggingJsonDraft}
-                  onChange={(e) => setTaggingJsonDraft(e.target.value)}
-                  style={{
-                    width: "100%",
-                    minHeight: 180,
-                    border: "1px solid rgba(0,0,0,0.35)",
-                    borderRadius: 12,
-                    padding: 12,
-                    fontSize: 13,
-                    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
-                  }}
-                />
+              {settingsError && (
+                <div style={{ marginTop: 10, border: "1px solid #000", borderRadius: 12, padding: 10 }}>
+                  <div style={{ fontWeight: 800, fontSize: 13 }}>Error</div>
+                  <div style={{ marginTop: 6, fontSize: 13, whiteSpace: "pre-wrap" }}>{settingsError}</div>
+                </div>
               )}
+
+              <div style={{ marginTop: 12 }}>
+                {settingsTab === "ai" ? (
+                  <textarea
+                    value={aiRulesDraft}
+                    onChange={(e) => setAiRulesDraft(e.target.value)}
+                    style={{
+                      width: "100%",
+                      minHeight: 180,
+                      border: "1px solid rgba(0,0,0,0.35)",
+                      borderRadius: 12,
+                      padding: 12,
+                      fontSize: 13,
+                      fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
+                    }}
+                  />
+                ) : (
+                  <textarea
+                    value={taggingJsonDraft}
+                    onChange={(e) => setTaggingJsonDraft(e.target.value)}
+                    style={{
+                      width: "100%",
+                      minHeight: 180,
+                      border: "1px solid rgba(0,0,0,0.35)",
+                      borderRadius: 12,
+                      padding: 12,
+                      fontSize: 13,
+                      fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
+                    }}
+                  />
+                )}
+              </div>
             </div>
           </div>
         )}
