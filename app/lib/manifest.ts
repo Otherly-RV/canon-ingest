@@ -4,6 +4,7 @@ export type ProjectSettings = {
   aiRules: string;
   uiFieldsJson: string;
   taggingJson: string;
+  schemaJson: string;
 };
 
 export type AssetBBox = {
@@ -72,6 +73,18 @@ export function newManifest(projectId: string): ProjectManifest {
       uiFieldsJson: JSON.stringify({ fields: [] }, null, 2),
       taggingJson: JSON.stringify(
         { max_tags_per_image: 25, min_word_len: 3, banned: [], required: [] },
+        null,
+        2
+      ),
+      schemaJson: JSON.stringify(
+        {
+          levels: {
+            L1: { description: "High-level overview" },
+            L2: { description: "Category breakdown" },
+            L3: { description: "Detailed entries" }
+          },
+          categories: ["OVERVIEW", "CHARACTERS", "WORLD", "LORE", "STYLE", "STORY"]
+        },
         null,
         2
       )

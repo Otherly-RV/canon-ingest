@@ -9,6 +9,7 @@ type Body = {
   manifestUrl?: string;
   aiRules?: string;
   taggingJson?: string;
+  schemaJson?: string;
 };
 
 export async function POST(req: Request): Promise<Response> {
@@ -35,6 +36,15 @@ export async function POST(req: Request): Promise<Response> {
     }
   }
 
+  // If provided and non-empty, enforce schemaJson is valid JSON before saving
+  if (typeof body.schemaJson === "string" && body.schemaJson.trim()) {
+    try {
+      JSON.parse(body.schemaJson);
+    } catch {
+      return NextResponse.json({ ok: false, error: "schemaJson is not valid JSON" }, { status: 400 });
+    }
+  }
+
   let manifest: ProjectManifest;
   try {
     manifest = await fetchManifestDirect(manifestUrlRaw);
@@ -54,11 +64,12 @@ export async function POST(req: Request): Promise<Response> {
   }
 
   if (!latest.settings) {
-    latest.settings = { aiRules: "", uiFieldsJson: "{}", taggingJson: "{}" };
+    latest.settings = { aiRules: "", uiFieldsJson: "{}", taggingJson: "{}", schemaJson: "{}" };
   }
 
   if (typeof body.aiRules === "string") latest.settings.aiRules = body.aiRules;
   if (typeof body.taggingJson === "string") latest.settings.taggingJson = body.taggingJson;
+  if (typeof body.schemaJson === "string") latest.settings.schemaJson = body.schemaJson;
 
   const newManifestUrl = await saveManifest(latest);
 

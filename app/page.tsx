@@ -34,6 +34,7 @@ type Manifest = {
     aiRules: string;
     uiFieldsJson: string;
     taggingJson: string;
+    schemaJson: string;
   };
 };
 
@@ -161,8 +162,8 @@ function Tabs({
   value,
   onChange
 }: {
-  value: "ai" | "tagging";
-  onChange: (v: "ai" | "tagging") => void;
+  value: "ai" | "tagging" | "schema";
+  onChange: (v: "ai" | "tagging" | "schema") => void;
 }) {
   const tabStyle = (active: boolean): React.CSSProperties => ({
     border: "1px solid #000",
@@ -190,6 +191,9 @@ function Tabs({
       <button type="button" onClick={() => onChange("ai")} style={tabStyle(value === "ai")}>
         AI Rules
       </button>
+      <button type="button" onClick={() => onChange("schema")} style={tabStyle(value === "schema")}>
+        Schema JSON
+      </button>
       <button type="button" onClick={() => onChange("tagging")} style={tabStyle(value === "tagging")}>
         Tagging JSON
       </button>
@@ -213,12 +217,13 @@ export default function Page() {
   const [projects, setProjects] = useState<ProjectRow[]>([]);
 
   const [settingsOpen, setSettingsOpen] = useState(true);
-  const [settingsTab, setSettingsTab] = useState<"ai" | "tagging">("ai");
+  const [settingsTab, setSettingsTab] = useState<"ai" | "tagging" | "schema">("ai");
   const [settingsBusy, setSettingsBusy] = useState(false);
   const [settingsError, setSettingsError] = useState<string>("");
 
   const [aiRulesDraft, setAiRulesDraft] = useState<string>("");
   const [taggingJsonDraft, setTaggingJsonDraft] = useState<string>("");
+  const [schemaJsonDraft, setSchemaJsonDraft] = useState<string>("");
 
   const [rasterProgress, setRasterProgress] = useState({
     running: false,
@@ -272,6 +277,7 @@ export default function Page() {
     setManifest(m);
     setAiRulesDraft(m.settings?.aiRules ?? "");
     setTaggingJsonDraft(m.settings?.taggingJson ?? "");
+    setSchemaJsonDraft(m.settings?.schemaJson ?? "");
 
     // Load cached formatted text if available
     if (m.formattedText?.url) {
@@ -823,11 +829,22 @@ export default function Page() {
       return;
     }
 
+    // Validate taggingJson is valid JSON
     try {
       JSON.parse(taggingJsonDraft);
     } catch {
-      setSettingsError("Invalid JSON.");
+      setSettingsError("Tagging JSON is invalid.");
       return;
+    }
+
+    // Validate schemaJson is valid JSON (if not empty)
+    if (schemaJsonDraft.trim()) {
+      try {
+        JSON.parse(schemaJsonDraft);
+      } catch {
+        setSettingsError("Schema JSON is invalid.");
+        return;
+      }
     }
 
     setSettingsBusy(true);
@@ -835,7 +852,13 @@ export default function Page() {
       const r = await fetch("/api/projects/settings/save", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectId, manifestUrl, aiRules: aiRulesDraft, taggingJson: taggingJsonDraft })
+        body: JSON.stringify({
+          projectId,
+          manifestUrl,
+          aiRules: aiRulesDraft,
+          taggingJson: taggingJsonDraft,
+          schemaJson: schemaJsonDraft
+        })
       });
 
       if (!r.ok) throw new Error(await readErrorText(r));
@@ -1419,10 +1442,11 @@ export default function Page() {
             )}
 
             <div style={{ marginTop: 12 }}>
-              {settingsTab === "ai" ? (
+              {settingsTab === "ai" && (
                 <textarea
                   value={aiRulesDraft}
                   onChange={(e) => setAiRulesDraft(e.target.value)}
+                  placeholder="Enter AI rules for analysis..."
                   style={{
                     width: "100%",
                     maxWidth: "100%",
@@ -1436,10 +1460,31 @@ export default function Page() {
                     display: "block"
                   }}
                 />
-              ) : (
+              )}
+              {settingsTab === "schema" && (
+                <textarea
+                  value={schemaJsonDraft}
+                  onChange={(e) => setSchemaJsonDraft(e.target.value)}
+                  placeholder='{"levels": {"L1": {...}, "L2": {...}, "L3": {...}}, "categories": ["OVERVIEW", "CHARACTERS", "WORLD", "LORE", "STYLE", "STORY"]}'
+                  style={{
+                    width: "100%",
+                    maxWidth: "100%",
+                    minHeight: 180,
+                    border: "1px solid rgba(0,0,0,0.35)",
+                    borderRadius: 12,
+                    padding: 12,
+                    fontSize: 13,
+                    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                    boxSizing: "border-box",
+                    display: "block"
+                  }}
+                />
+              )}
+              {settingsTab === "tagging" && (
                 <textarea
                   value={taggingJsonDraft}
                   onChange={(e) => setTaggingJsonDraft(e.target.value)}
+                  placeholder='{"tags": [...]}'
                   style={{
                     width: "100%",
                     maxWidth: "100%",
