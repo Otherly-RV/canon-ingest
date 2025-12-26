@@ -545,6 +545,34 @@ export default function Page() {
     }
   }
 
+  async function tagImages() {
+    setLastError("");
+    if (!projectId || !manifestUrl) return setLastError("Missing projectId/manifestUrl");
+    if (busy) return;
+
+    setBusy("Tagging images...");
+    try {
+      const r = await fetch("/api/projects/tag-images", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId, manifestUrl })
+      });
+
+      if (!r.ok) throw new Error(await readErrorText(r));
+
+      const j = (await r.json()) as { ok: boolean; manifestUrl?: string; error?: string };
+      if (!j.ok || !j.manifestUrl) throw new Error(j.error || "Tagging failed (bad response)");
+
+      setManifestUrl(j.manifestUrl);
+      setUrlParams(projectId, j.manifestUrl);
+      await loadManifest(j.manifestUrl);
+    } catch (e) {
+      setLastError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy("");
+    }
+  }
+
   async function rebuildAssets() {
     setLastError("");
     if (!projectId || !manifestUrl) return;
@@ -871,6 +899,22 @@ export default function Page() {
             }}
           >
             Split images
+          </button>
+
+          <button
+            type="button"
+            disabled={!manifest?.pages?.length || !!busy}
+            onClick={() => void tagImages()}
+            style={{
+              border: "1px solid #000",
+              background: manifest?.pages?.length && !busy ? "#000" : "#fff",
+              color: manifest?.pages?.length && !busy ? "#fff" : "#000",
+              padding: "10px 12px",
+              borderRadius: 12,
+              opacity: manifest?.pages?.length && !busy ? 1 : 0.4
+            }}
+          >
+            Tag Images
           </button>
 
           <button
