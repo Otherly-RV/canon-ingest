@@ -173,7 +173,7 @@ export async function POST(req: Request): Promise<Response> {
   }
 
   const manifest = (await fetchJson(manifestUrlRaw)) as ProjectManifest;
-  if (manifest.projectId !== projectId) {
+ if (manifest.projectId !== projectId) {
     return NextResponse.json({ ok: false, error: "projectId does not match manifest" }, { status: 400 });
   }
 
