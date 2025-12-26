@@ -180,24 +180,38 @@ export async function POST(req: Request): Promise<Response> {
   }
   const totalPages = pages.length;
   // Add tags per page (stored on pages[n] as "tags")
-  const updatedPages = pages.map((p) => {
+  const newTagsByPage = new Map<number, string[]>();
+  for (const p of pages) {
     const pageText = sliceForPage(fullText, p.pageNumber, totalPages);
     const tags = extractTags(pageText, cfg);
-    return { ...p, tags };
-  });
-  // Final filter: never keep assets with tombstoned assetIds
-  for (const p of updatedPages) {
-    if (Array.isArray(p.deletedAssetIds) && Array.isArray(p.assets)) {
-      const deleted = new Set(p.deletedAssetIds);
-      p.assets = p.assets.filter((a) => !deleted.has(a.assetId));
+    newTagsByPage.set(p.pageNumber, tags);
+  }
+
+  // Re-fetch latest manifest to avoid race conditions
+  const latest = await fetchManifest(manifestUrlRaw);
+  if (latest.projectId !== projectId) {
+    return NextResponse.json({ ok: false, error: "projectId does not match manifest on re-fetch" }, { status: 400 });
+  }
+
+  if (Array.isArray(latest.pages)) {
+    for (const p of latest.pages) {
+      const tags = newTagsByPage.get(p.pageNumber);
+      if (tags) {
+        p.tags = tags;
+      }
+      // Final filter: never keep assets with tombstoned assetIds
+      if (Array.isArray(p.deletedAssetIds) && Array.isArray(p.assets)) {
+        const deleted = new Set(p.deletedAssetIds);
+        p.assets = p.assets.filter((a) => !deleted.has(a.assetId));
+      }
     }
   }
-  (manifest as unknown as { pages: unknown }).pages = updatedPages;
-  const newManifestUrl = await saveManifest(manifest);
+
+  const newManifestUrl = await saveManifest(latest);
   return NextResponse.json({
     ok: true,
     manifestUrl: newManifestUrl,
     totalPages,
-    taggedPages: updatedPages.filter((p) => Array.isArray((p as { tags?: unknown }).tags)).length
+    taggedPages: newTagsByPage.size
   });
 }

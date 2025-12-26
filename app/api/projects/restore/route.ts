@@ -171,19 +171,58 @@ export async function POST(req: Request): Promise<Response> {
       }
     }
 
-    // Final filter: never keep assets with tombstoned assetIds
-    for (const page of pagesByNumber.values()) {
-      const deleted = Array.isArray(page.deletedAssetIds) ? new Set(page.deletedAssetIds) : new Set();
-      if (Array.isArray(page.assets)) {
-        page.assets = page.assets.filter((a) => !deleted.has(a.assetId));
-      }
+    // Re-fetch latest manifest to avoid race conditions
+    const latest = await fetchManifest(manifestUrl);
+    if (latest.projectId !== projectId) {
+      return NextResponse.json({ ok: false, error: "projectId does not match manifest on re-fetch" }, { status: 400 });
     }
 
-    // Write back sorted pages
-    const pages = Array.from(pagesByNumber.values()).sort((a, b) => a.pageNumber - b.pageNumber);
-    manifest.pages = pages;
+    // Merge restored assets into latest manifest
+    const latestPagesByNumber = new Map<number, PageImage>();
+    if (Array.isArray(latest.pages)) {
+      for (const p of latest.pages) latestPagesByNumber.set(p.pageNumber, p);
+    } else {
+      latest.pages = [];
+    }
 
-    const newManifestUrl = await saveManifest(manifest);
+    for (const [pageNumber, p] of pagesByNumber) {
+      let latestPage = latestPagesByNumber.get(pageNumber);
+      if (!latestPage) {
+        latestPage = {
+          pageNumber,
+          url: p.url,
+          width: p.width,
+          height: p.height,
+          assets: [],
+          deletedAssetIds: []
+        };
+        latest.pages.push(latestPage);
+        latestPagesByNumber.set(pageNumber, latestPage);
+      }
+
+      if (!Array.isArray(latestPage.assets)) latestPage.assets = [];
+      const deleted = new Set(Array.isArray(latestPage.deletedAssetIds) ? latestPage.deletedAssetIds : []);
+
+      // Only add assets that are NOT in the latest tombstone list
+      if (Array.isArray(p.assets)) {
+        for (const a of p.assets) {
+          if (deleted.has(a.assetId)) continue;
+          
+          const existingIdx = latestPage.assets.findIndex((x) => x.assetId === a.assetId);
+          if (existingIdx >= 0) {
+             // Update existing
+             if (!latestPage.assets[existingIdx].url) latestPage.assets[existingIdx].url = a.url;
+          } else {
+             // Add new
+             latestPage.assets.push(a);
+          }
+        }
+      }
+    }
+    
+    latest.pages.sort((a, b) => a.pageNumber - b.pageNumber);
+
+    const newManifestUrl = await saveManifest(latest);
 
     return NextResponse.json({
       ok: true,

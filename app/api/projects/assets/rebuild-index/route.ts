@@ -106,15 +106,24 @@ export async function POST(req: Request): Promise<Response> {
       foundByPage.set(item.pageNumber, arr);
     }
 
+    // Re-fetch latest manifest to avoid race conditions
+    const latest = await fetchManifest(manifestUrl);
+    if (latest.projectId !== projectId) {
+      return NextResponse.json({ ok: false, error: "projectId does not match manifest on re-fetch" }, { status: 400 });
+    }
+
+    if (!Array.isArray(latest.pages)) latest.pages = [];
+
+    // Ensure pages exist in latest manifest
     for (const pageNumber of foundByPage.keys()) {
-      if (!manifest.pages.find(p => p.pageNumber === pageNumber)) {
-        manifest.pages.push({ pageNumber, url: "", width: 0, height: 0, assets: [] });
+      if (!latest.pages.find(p => p.pageNumber === pageNumber)) {
+        latest.pages.push({ pageNumber, url: "", width: 0, height: 0, assets: [] });
       }
     }
 
-    manifest.pages.sort((a, b) => a.pageNumber - b.pageNumber);
+    latest.pages.sort((a, b) => a.pageNumber - b.pageNumber);
 
-    for (const p of manifest.pages) {
+    for (const p of latest.pages) {
       const blobAssetsAll = foundByPage.get(p.pageNumber) ?? [];
       const deleted = new Set<string>(Array.isArray(p.deletedAssetIds) ? p.deletedAssetIds : []);
 
@@ -122,6 +131,9 @@ export async function POST(req: Request): Promise<Response> {
       const verifiedAssets = [];
       for (const ba of blobAssetsAll) {
         if (deleted.has(ba.assetId)) continue;
+        // We already verified HEAD in the previous loop? No, we didn't.
+        // Wait, the previous code did HEAD check inside the loop over manifest.pages.
+        // We should do it here too.
         const check = await fetch(ba.url, { method: 'HEAD', cache: 'no-store' });
         if (check.status !== 404) {
           verifiedAssets.push(ba);
@@ -146,7 +158,7 @@ export async function POST(req: Request): Promise<Response> {
         .sort((a, b) => a.assetId.localeCompare(b.assetId));
     }
 
-    const newManifestUrl = await saveManifest(manifest);
+    const newManifestUrl = await saveManifest(latest);
 
     return NextResponse.json({
       ok: true,

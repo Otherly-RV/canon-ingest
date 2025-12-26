@@ -47,6 +47,7 @@ export async function POST(req: Request): Promise<Response> {
     return NextResponse.json({ ok: false, error: "Missing fields" }, { status: 400 });
   }
 
+  // Re-fetch latest manifest to avoid race conditions
   const manifest = await fetchManifest(manifestUrl);
   if (manifest.projectId !== projectId) {
     return NextResponse.json({ ok: false, error: "projectId does not match manifest" }, { status: 400 });
