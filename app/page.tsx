@@ -265,6 +265,33 @@ export default function Page() {
     setManifest(m);
     setAiRulesDraft(m.settings?.aiRules ?? "");
     setTaggingJsonDraft(m.settings?.taggingJson ?? "");
+
+    // Load cached formatted text if available
+    if (m.formattedText?.url) {
+      try {
+        const res = await fetch(m.formattedText.url);
+        if (res.ok) {
+          const text = await res.text();
+          setFormattedText(text);
+        }
+      } catch {
+        // Ignore errors loading cached text
+      }
+    }
+
+    // Load cached extracted text if available
+    if (m.extractedText?.url) {
+      try {
+        const res = await fetch(m.extractedText.url);
+        if (res.ok) {
+          const text = await res.text();
+          setExtractedText(text);
+        }
+      } catch {
+        // Ignore errors loading extracted text
+      }
+    }
+
     return m;
   }
 
@@ -984,117 +1011,119 @@ export default function Page() {
 
   return (
     <div style={{ minHeight: "100vh", padding: 28 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "flex-start" }}>
-        <div>
-          <div style={{ fontSize: 22, fontWeight: 800, letterSpacing: -0.3 }}>OTHERLY — Ingest 1.0</div>
-        </div>
+      {/* Row 1: App name */}
+      <div style={{ fontSize: 22, fontWeight: 800, letterSpacing: -0.3 }}>OTHERLY — Ingest 1.0</div>
 
-        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
-          <button
-            type="button"
-            disabled={!!busy}
-            onClick={() => fileRef.current?.click()}
-            style={{ border: "1px solid #000", background: "#fff", padding: "10px 12px", borderRadius: 12 }}
-          >
-            1. Load Source
-          </button>
+      {/* Row 2: Main workflow buttons */}
+      <div style={{ marginTop: 18, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+        <button
+          type="button"
+          disabled={!!busy}
+          onClick={() => fileRef.current?.click()}
+          style={{ border: "1px solid #000", background: "#fff", padding: "10px 12px", borderRadius: 12 }}
+        >
+          1. Load Source
+        </button>
 
-          <button
-            type="button"
-            disabled={!manifest?.sourcePdf?.url || !!busy}
-            onClick={() => void processPdf()}
-            style={{
-              border: "1px solid #000",
-              background: manifest?.sourcePdf?.url && !busy ? "#000" : "#fff",
-              color: manifest?.sourcePdf?.url && !busy ? "#fff" : "#000",
-              padding: "10px 12px",
-              borderRadius: 12,
-              opacity: manifest?.sourcePdf?.url && !busy ? 1 : 0.4
-            }}
-          >
-            2. Process Text
-          </button>
+        <button
+          type="button"
+          disabled={!manifest?.sourcePdf?.url || !!busy}
+          onClick={() => void processPdf()}
+          style={{
+            border: "1px solid #000",
+            background: manifest?.sourcePdf?.url && !busy ? "#000" : "#fff",
+            color: manifest?.sourcePdf?.url && !busy ? "#fff" : "#000",
+            padding: "10px 12px",
+            borderRadius: 12,
+            opacity: manifest?.sourcePdf?.url && !busy ? 1 : 0.4
+          }}
+        >
+          2. Process Text
+        </button>
 
-          <button
-            type="button"
-            disabled={!manifest?.extractedText?.url || !!busy || textLoading}
-            onClick={() => void loadExtractedText()}
-            style={{
-              border: "1px solid #000",
-              background: manifest?.extractedText?.url && !busy ? "#000" : "#fff",
-              color: manifest?.extractedText?.url && !busy ? "#fff" : "#000",
-              padding: "10px 12px",
-              borderRadius: 12,
-              opacity: manifest?.extractedText?.url && !busy ? 1 : 0.4
-            }}
-          >
-            {textLoading ? "Loading..." : "3. View Text"}
-          </button>
+        <button
+          type="button"
+          disabled={!manifest?.extractedText?.url || !!busy || textLoading}
+          onClick={() => void loadExtractedText()}
+          style={{
+            border: "1px solid #000",
+            background: manifest?.extractedText?.url && !busy ? "#000" : "#fff",
+            color: manifest?.extractedText?.url && !busy ? "#fff" : "#000",
+            padding: "10px 12px",
+            borderRadius: 12,
+            opacity: manifest?.extractedText?.url && !busy ? 1 : 0.4
+          }}
+        >
+          {textLoading ? "Loading..." : "3. View Text"}
+        </button>
 
-          <button
-            type="button"
-            disabled={!manifest?.sourcePdf?.url || !!busy || rasterProgress.running}
-            onClick={() => void rasterizeToPngs()}
-            style={{
-              border: "1px solid #000",
-              background: manifest?.sourcePdf?.url && !busy ? "#000" : "#fff",
-              color: manifest?.sourcePdf?.url && !busy ? "#fff" : "#000",
-              padding: "10px 12px",
-              borderRadius: 12,
-              opacity: manifest?.sourcePdf?.url && !busy ? 1 : 0.4
-            }}
-          >
-            4. Rasterize PNGs
-          </button>
+        <button
+          type="button"
+          disabled={!manifest?.sourcePdf?.url || !!busy || rasterProgress.running}
+          onClick={() => void rasterizeToPngs()}
+          style={{
+            border: "1px solid #000",
+            background: manifest?.sourcePdf?.url && !busy ? "#000" : "#fff",
+            color: manifest?.sourcePdf?.url && !busy ? "#fff" : "#000",
+            padding: "10px 12px",
+            borderRadius: 12,
+            opacity: manifest?.sourcePdf?.url && !busy ? 1 : 0.4
+          }}
+        >
+          4. Rasterize PNGs
+        </button>
 
-          <button
-            type="button"
-            disabled={!manifest?.pages?.length || !!busy || splitProgress.running}
-            onClick={() => void splitImages()}
-            style={{
-              border: "1px solid #000",
-              background: manifest?.pages?.length && !busy ? "#000" : "#fff",
-              color: manifest?.pages?.length && !busy ? "#fff" : "#000",
-              padding: "10px 12px",
-              borderRadius: 12,
-              opacity: manifest?.pages?.length && !busy ? 1 : 0.4
-            }}
-          >
-            5. Detect Images
-          </button>
-
-          <button
-            type="button"
-            disabled={!manifestUrl || !projectId || !!busy}
-            onClick={() => void rebuildAssets()}
-            style={{
-              border: "1px solid #000",
-              background: "#fff",
-              padding: "10px 12px",
-              borderRadius: 12,
-              opacity: !manifestUrl || !projectId || busy ? 0.4 : 1
-            }}
-          >
-            Rebuild assets
-          </button>
-
-          <button
-            type="button"
-            disabled={!manifestUrl || !projectId || !!busy}
-            onClick={() => void restoreFromBlob()}
-            style={{
-              border: "1px solid #000",
-              background: "#fff",
-              padding: "10px 12px",
-              borderRadius: 12,
-              opacity: !manifestUrl || !projectId || busy ? 0.4 : 1
-            }}
-          >
-            Restore
-          </button>
-        </div>
+        <button
+          type="button"
+          disabled={!manifest?.pages?.length || !!busy || splitProgress.running}
+          onClick={() => void splitImages()}
+          style={{
+            border: "1px solid #000",
+            background: manifest?.pages?.length && !busy ? "#000" : "#fff",
+            color: manifest?.pages?.length && !busy ? "#fff" : "#000",
+            padding: "10px 12px",
+            borderRadius: 12,
+            opacity: manifest?.pages?.length && !busy ? 1 : 0.4
+          }}
+        >
+          5. Detect Images
+        </button>
       </div>
 
+      {/* Row 3: Utility buttons aligned right */}
+      <div style={{ marginTop: 12, display: "flex", gap: 10, justifyContent: "flex-end" }}>
+        <button
+          type="button"
+          disabled={!manifestUrl || !projectId || !!busy}
+          onClick={() => void rebuildAssets()}
+          style={{
+            border: "1px solid #000",
+            background: "#fff",
+            padding: "10px 12px",
+            borderRadius: 12,
+            opacity: !manifestUrl || !projectId || busy ? 0.4 : 1
+          }}
+        >
+          Rebuild assets
+        </button>
+
+        <button
+          type="button"
+          disabled={!manifestUrl || !projectId || !!busy}
+          onClick={() => void restoreFromBlob()}
+          style={{
+            border: "1px solid #000",
+            background: "#fff",
+            padding: "10px 12px",
+            borderRadius: 12,
+            opacity: !manifestUrl || !projectId || busy ? 0.4 : 1
+          }}
+        >
+          Restore
+        </button>
+      </div>
+
+      {/* Working Panel */}
       {!!busy && (
         <div style={{ marginTop: 18, border: "1px solid #000", borderRadius: 12, padding: 12 }}>
           <div style={{ fontWeight: 800 }}>Working</div>
@@ -1109,67 +1138,19 @@ export default function Page() {
 
           {splitProgress.totalPages > 0 && (
             <div style={{ marginTop: 10, fontSize: 13, opacity: 0.85 }}>
-              Split: {splitProgress.page}/{splitProgress.totalPages} · {splitProgress.assetsUploaded}
+              Detect: {splitProgress.page}/{splitProgress.totalPages} · {splitProgress.assetsUploaded} assets
             </div>
           )}
         </div>
       )}
 
+      {/* Error Panel */}
       {!!lastError && (
         <div style={{ marginTop: 18, border: "1px solid #000", borderRadius: 12, padding: 12 }}>
           <div style={{ fontWeight: 800 }}>Error</div>
           <div style={{ marginTop: 6, fontSize: 13, whiteSpace: "pre-wrap" }}>{lastError}</div>
         </div>
       )}
-
-      {/* Text Panel */}
-      <div style={{ marginTop: 18, border: "1px solid #000", borderRadius: 12 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: 14 }}>
-          <div style={{ fontWeight: 800 }}>Extracted Text</div>
-          <button
-            type="button"
-            aria-label={textPanelOpen ? "Collapse text" : "Expand text"}
-            onClick={() => setTextPanelOpen((v) => !v)}
-            style={{
-              border: "1px solid #000",
-              background: "#fff",
-              width: 36,
-              height: 30,
-              borderRadius: 10,
-              display: "grid",
-              placeItems: "center"
-            }}
-          >
-            <Chevron up={textPanelOpen} />
-          </button>
-        </div>
-
-        {textPanelOpen && (
-          <div style={{ padding: "0 14px 14px 14px" }}>
-            {formattedText ? (
-              <div
-                style={{
-                  fontSize: 13,
-                  lineHeight: 1.6,
-                  whiteSpace: "pre-wrap",
-                  maxHeight: 400,
-                  overflow: "auto",
-                  background: "#f9f9f9",
-                  padding: 12,
-                  borderRadius: 8,
-                  border: "1px solid #ddd"
-                }}
-              >
-                {formattedText}
-              </div>
-            ) : (
-              <div style={{ fontSize: 13, opacity: 0.6 }}>
-                Click &quot;View Text&quot; to load and format extracted text.
-              </div>
-            )}
-          </div>
-        )}
-      </div>
 
       {/* Debug Log Panel */}
       <div style={{ marginTop: 18, border: "1px solid #000", borderRadius: 12 }}>
@@ -1232,8 +1213,71 @@ export default function Page() {
         )}
       </div>
 
-      <div style={{ marginTop: 18, borderTop: "1px solid rgba(0,0,0,0.2)" }} />
+      {/* Cloud State Panel */}
+      <div style={{ marginTop: 18, border: "1px solid #000", borderRadius: 12 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: 14 }}>
+          <div style={{ fontWeight: 800 }}>Cloud state</div>
 
+          <button
+            type="button"
+            aria-label={cloudOpen ? "Collapse cloud state" : "Expand cloud state"}
+            onClick={() => setCloudOpen((v) => !v)}
+            style={{
+              border: "1px solid #000",
+              background: "#fff",
+              width: 36,
+              height: 30,
+              borderRadius: 10,
+              display: "grid",
+              placeItems: "center"
+            }}
+          >
+            <Chevron up={cloudOpen} />
+          </button>
+        </div>
+
+        {cloudOpen && (
+          <div style={{ padding: "0 14px 14px 14px", fontSize: 13 }}>
+            <div>
+              <span style={{ opacity: 0.7 }}>projectId:</span> {projectId || "—"}
+            </div>
+
+            <div style={{ marginTop: 6 }}>
+              <span style={{ opacity: 0.7 }}>status:</span> {manifest?.status || "—"}
+            </div>
+
+            <div style={{ marginTop: 10 }}>
+              <span style={{ opacity: 0.7 }}>manifestUrl:</span>
+            </div>
+            <div style={{ fontSize: 12, wordBreak: "break-all" }}>{manifestUrl || "—"}</div>
+
+            <div style={{ marginTop: 10 }}>
+              <span style={{ opacity: 0.7 }}>sourcePdf:</span>
+            </div>
+            <div style={{ fontSize: 12, wordBreak: "break-all" }}>{manifest?.sourcePdf?.url || "—"}</div>
+
+            <div style={{ marginTop: 10 }}>
+              <span style={{ opacity: 0.7 }}>extractedText:</span>
+            </div>
+            <div style={{ fontSize: 12, wordBreak: "break-all" }}>{manifest?.extractedText?.url || "—"}</div>
+
+            <div style={{ marginTop: 10 }}>
+              <span style={{ opacity: 0.7 }}>docAiJson:</span>
+            </div>
+            <div style={{ fontSize: 12, wordBreak: "break-all" }}>{manifest?.docAiJson?.url || "—"}</div>
+
+            <div style={{ marginTop: 10 }}>
+              <span style={{ opacity: 0.7 }}>pages:</span> {pagesCount}
+            </div>
+
+            <div style={{ marginTop: 6 }}>
+              <span style={{ opacity: 0.7 }}>assets:</span> {totalAssetsCount}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Settings Panel */}
       <div style={{ marginTop: 18, border: "1px solid #000", borderRadius: 12 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: 14 }}>
           <div style={{ fontWeight: 800 }}>Settings</div>
@@ -1258,9 +1302,7 @@ export default function Page() {
         {settingsOpen && (
           <div style={{ padding: "0 14px 14px 14px" }}>
             <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <Tabs value={settingsTab} onChange={setSettingsTab} />
-              </div>
+              <Tabs value={settingsTab} onChange={setSettingsTab} />
 
               <button
                 type="button"
@@ -1325,6 +1367,58 @@ export default function Page() {
         )}
       </div>
 
+      <div style={{ marginTop: 18, borderTop: "1px solid rgba(0,0,0,0.2)" }} />
+
+      {/* Extracted Text Panel */}
+      <div style={{ marginTop: 18, border: "1px solid #000", borderRadius: 12 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: 14 }}>
+          <div style={{ fontWeight: 800 }}>Extracted Text</div>
+          <button
+            type="button"
+            aria-label={textPanelOpen ? "Collapse text" : "Expand text"}
+            onClick={() => setTextPanelOpen((v) => !v)}
+            style={{
+              border: "1px solid #000",
+              background: "#fff",
+              width: 36,
+              height: 30,
+              borderRadius: 10,
+              display: "grid",
+              placeItems: "center"
+            }}
+          >
+            <Chevron up={textPanelOpen} />
+          </button>
+        </div>
+
+        {textPanelOpen && (
+          <div style={{ padding: "0 14px 14px 14px" }}>
+            {formattedText ? (
+              <div
+                style={{
+                  fontSize: 13,
+                  lineHeight: 1.6,
+                  whiteSpace: "pre-wrap",
+                  maxHeight: 400,
+                  overflow: "auto",
+                  background: "#f9f9f9",
+                  padding: 12,
+                  borderRadius: 8,
+                  border: "1px solid #ddd"
+                }}
+              >
+                {formattedText}
+              </div>
+            ) : (
+              <div style={{ fontSize: 13, opacity: 0.6 }}>
+                Click &quot;View Text&quot; to load and format extracted text.
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Projects Panel */}
       <div style={{ marginTop: 18, border: "1px solid #000", borderRadius: 12 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: 14 }}>
           <div style={{ fontWeight: 800 }}>Projects</div>
@@ -1437,6 +1531,7 @@ export default function Page() {
         )}
       </div>
 
+      {/* Assets Panel */}
       <div style={{ marginTop: 18, border: "1px solid #000", borderRadius: 12 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: 14 }}>
           <div style={{ fontWeight: 800 }}>Assets</div>
@@ -1472,69 +1567,6 @@ export default function Page() {
                 {assetsFlat.map(({ pageNumber, asset }) => assetCard(pageNumber, asset))}
               </div>
             )}
-          </div>
-        )}
-      </div>
-
-      <div style={{ marginTop: 18, border: "1px solid #000", borderRadius: 12 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: 14 }}>
-          <div style={{ fontWeight: 800 }}>Cloud state</div>
-
-          <button
-            type="button"
-            aria-label={cloudOpen ? "Collapse cloud state" : "Expand cloud state"}
-            onClick={() => setCloudOpen((v) => !v)}
-            style={{
-              border: "1px solid #000",
-              background: "#fff",
-              width: 36,
-              height: 30,
-              borderRadius: 10,
-              display: "grid",
-              placeItems: "center"
-            }}
-          >
-            <Chevron up={cloudOpen} />
-          </button>
-        </div>
-
-        {cloudOpen && (
-          <div style={{ padding: "0 14px 14px 14px", fontSize: 13 }}>
-            <div>
-              <span style={{ opacity: 0.7 }}>projectId:</span> {projectId || "—"}
-            </div>
-
-            <div style={{ marginTop: 6 }}>
-              <span style={{ opacity: 0.7 }}>status:</span> {manifest?.status || "—"}
-            </div>
-
-            <div style={{ marginTop: 10 }}>
-              <span style={{ opacity: 0.7 }}>manifestUrl:</span>
-            </div>
-            <div style={{ fontSize: 12, wordBreak: "break-all" }}>{manifestUrl || "—"}</div>
-
-            <div style={{ marginTop: 10 }}>
-              <span style={{ opacity: 0.7 }}>sourcePdf:</span>
-            </div>
-            <div style={{ fontSize: 12, wordBreak: "break-all" }}>{manifest?.sourcePdf?.url || "—"}</div>
-
-            <div style={{ marginTop: 10 }}>
-              <span style={{ opacity: 0.7 }}>extractedText:</span>
-            </div>
-            <div style={{ fontSize: 12, wordBreak: "break-all" }}>{manifest?.extractedText?.url || "—"}</div>
-
-            <div style={{ marginTop: 10 }}>
-              <span style={{ opacity: 0.7 }}>docAiJson:</span>
-            </div>
-            <div style={{ fontSize: 12, wordBreak: "break-all" }}>{manifest?.docAiJson?.url || "—"}</div>
-
-            <div style={{ marginTop: 10 }}>
-              <span style={{ opacity: 0.7 }}>pages:</span> {pagesCount}
-            </div>
-
-            <div style={{ marginTop: 6 }}>
-              <span style={{ opacity: 0.7 }}>assets:</span> {totalAssetsCount}
-            </div>
           </div>
         )}
       </div>
