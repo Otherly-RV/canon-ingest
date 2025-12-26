@@ -1425,12 +1425,15 @@ export default function Page() {
                   onChange={(e) => setAiRulesDraft(e.target.value)}
                   style={{
                     width: "100%",
+                    maxWidth: "100%",
                     minHeight: 180,
                     border: "1px solid rgba(0,0,0,0.35)",
                     borderRadius: 12,
                     padding: 12,
                     fontSize: 13,
-                    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
+                    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                    boxSizing: "border-box",
+                    display: "block"
                   }}
                 />
               ) : (
@@ -1439,12 +1442,15 @@ export default function Page() {
                   onChange={(e) => setTaggingJsonDraft(e.target.value)}
                   style={{
                     width: "100%",
+                    maxWidth: "100%",
                     minHeight: 180,
                     border: "1px solid rgba(0,0,0,0.35)",
                     borderRadius: 12,
                     padding: 12,
                     fontSize: 13,
-                    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
+                    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                    boxSizing: "border-box",
+                    display: "block"
                   }}
                 />
               )}
