@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
-import { list } from "@vercel/blob"; 
-import { saveManifest, type ProjectManifest, type PageAsset, type AssetBBox } from "@/app/lib/manifest";
+import { list } from "@vercel/blob";
+import {
+  saveManifest,
+  type ProjectManifest,
+  type PageAsset,
+} from "@/app/lib/manifest";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -8,6 +12,7 @@ export const dynamic = "force-dynamic";
 type Body = {
   projectId?: string;
   manifestUrl?: string;
+  pngOnly?: boolean; // optional: default true
 };
 
 type ListResult = {
@@ -15,35 +20,46 @@ type ListResult = {
   cursor?: string | null;
 };
 
+function jsonError(message: string, status = 400) {
+  return NextResponse.json({ ok: false, error: message }, { status });
+}
+
 /**
- * FIX 1: Direct Origin Read
- * Instead of SDK 'get', we use fetch with headers that force Vercel 
- * to bypass the Edge Network and hit the blob storage directly.
+ * Read manifest with no-store + cachebuster.
+ * This does NOT "guarantee origin"; it just avoids Next/browsers caching the response.
  */
-async function fetchManifestDirect(url: string): Promise<ProjectManifest> {
-  const cacheBuster = `${url}${url.includes('?') ? '&' : '?'}v=${Date.now()}`;
-  
-  const res = await fetch(cacheBuster, { 
+async function readManifest(manifestUrl: string): Promise<ProjectManifest> {
+  const url = `${manifestUrl}${manifestUrl.includes("?") ? "&" : "?"}v=${Date.now()}`;
+  const res = await fetch(url, {
     cache: "no-store",
     headers: {
-      'Cache-Control': 'no-cache',
-      'Pragma': 'no-cache'
-    }
+      "Cache-Control": "no-cache",
+      Pragma: "no-cache",
+    },
   });
 
   if (!res.ok) {
-    throw new Error(`Failed to read manifest directly: ${res.statusText}`);
+    throw new Error(`Failed to read manifest: ${res.status} ${res.statusText}`);
   }
-  
   return (await res.json()) as ProjectManifest;
 }
 
 function parseAssetPath(pathname: string) {
-  const m = pathname.match(/^projects\/[^/]+\/assets\/p(\d+)\/(p\d+-img\d+)/);
+  // expected: projects/{projectId}/assets/p{page}/p{page}-img{n}.png
+  // keep it tolerant: capture page number and assetId only
+  const m = pathname.match(/^projects\/[^/]+\/assets\/p(\d+)\/(p\d+-img\d+)(\.[a-zA-Z0-9]+)?$/);
   if (!m) return null;
-  const pageNumber = Number(m[1]);
-  const assetId = m[2];
-  return { pageNumber, assetId };
+  return {
+    pageNumber: Number(m[1]),
+    assetId: m[2],
+    ext: (m[3] || "").toLowerCase(), // ".png" etc
+  };
+}
+
+function pickPreferredUrl(a: string, b: string) {
+  // If you ever have duplicates, pick deterministically.
+  // Using lexicographic max is stable and tends to prefer longer/suffixed URLs.
+  return a >= b ? a : b;
 }
 
 export async function POST(req: Request): Promise<Response> {
@@ -52,24 +68,26 @@ export async function POST(req: Request): Promise<Response> {
     try {
       body = (await req.json()) as Body;
     } catch {
-      return NextResponse.json({ ok: false, error: "Invalid JSON body" }, { status: 400 });
+      return jsonError("Invalid JSON body", 400);
     }
 
     const projectId = (body.projectId || "").trim();
     const manifestUrl = (body.manifestUrl || "").trim();
+    const pngOnly = body.pngOnly ?? true;
 
     if (!projectId || !manifestUrl) {
-      return NextResponse.json({ ok: false, error: "Missing projectId/manifestUrl" }, { status: 400 });
+      return jsonError("Missing projectId/manifestUrl", 400);
     }
 
-    // Use the direct fetch to avoid CDN ghosting
-    const manifest = await fetchManifestDirect(manifestUrl);
-    
-    if (manifest.projectId !== projectId) {
-      return NextResponse.json({ ok: false, error: "projectId does not match manifest" }, { status: 400 });
+    const manifest = await readManifest(manifestUrl);
+
+    if ((manifest.projectId || "").trim() !== projectId) {
+      return jsonError("projectId does not match manifest", 400);
     }
 
     if (!Array.isArray(manifest.pages)) manifest.pages = [];
+
+    // --- 1) List blobs and build a map page->assetId->url ---
     const prefix = `projects/${projectId}/assets/`;
     const found = new Map<string, { pageNumber: number; assetId: string; url: string }>();
 
@@ -82,15 +100,21 @@ export async function POST(req: Request): Promise<Response> {
         const parsed = parseAssetPath(pathname);
         if (!parsed) continue;
 
+        if (pngOnly && parsed.ext && parsed.ext !== ".png") continue;
+
         const url = b.url || "";
         if (!url) continue;
 
         const key = `${parsed.pageNumber}::${parsed.assetId}`;
         const prev = found.get(key);
-        if (!prev) found.set(key, { pageNumber: parsed.pageNumber, assetId: parsed.assetId, url });
-        else {
-          const pick = url.length >= prev.url.length ? url : prev.url;
-          found.set(key, { pageNumber: parsed.pageNumber, assetId: parsed.assetId, url: pick });
+        if (!prev) {
+          found.set(key, { pageNumber: parsed.pageNumber, assetId: parsed.assetId, url });
+        } else {
+          found.set(key, {
+            pageNumber: parsed.pageNumber,
+            assetId: parsed.assetId,
+            url: pickPreferredUrl(prev.url, url),
+          });
         }
       }
 
@@ -106,56 +130,51 @@ export async function POST(req: Request): Promise<Response> {
       foundByPage.set(item.pageNumber, arr);
     }
 
+    // --- 2) Ensure manifest has page entries for found pages (but don't create random garbage) ---
     for (const pageNumber of foundByPage.keys()) {
-      if (!manifest.pages.find(p => p.pageNumber === pageNumber)) {
-        manifest.pages.push({ pageNumber, url: "", width: 0, height: 0, assets: [] });
+      if (!manifest.pages.some((p) => p.pageNumber === pageNumber)) {
+        manifest.pages.push({ pageNumber, url: "", width: 0, height: 0, assets: [], deletedAssetIds: [] });
       }
     }
-
     manifest.pages.sort((a, b) => a.pageNumber - b.pageNumber);
 
+    // --- 3) Rebuild each page assets while respecting tombstones and preserving bbox/tags ---
     for (const p of manifest.pages) {
       const blobAssetsAll = foundByPage.get(p.pageNumber) ?? [];
-      const deleted = new Set<string>(Array.isArray(p.deletedAssetIds) ? p.deletedAssetIds : []);
 
-      /**
-       * FIX 2: Verify Assets with HEAD Requests.
-       * Even if 'list()' finds the file, the CDN might still be propagating.
-       * Checking the status ensures we don't re-index a file that is actually gone.
-       */
-      const verifiedAssets = [];
-      for (const ba of blobAssetsAll) {
-        if (deleted.has(ba.assetId)) continue;
-
-        const check = await fetch(ba.url, { method: 'HEAD', cache: 'no-store' });
-        if (check.status !== 404) {
-          verifiedAssets.push(ba);
-        }
-      }
+      const deleted = new Set<string>(
+        Array.isArray((p as any).deletedAssetIds) ? (p as any).deletedAssetIds : []
+      );
 
       const existingById = new Map<string, PageAsset>();
-      for (const a of (p.assets || [])) existingById.set(a.assetId, a);
+      for (const a of p.assets || []) existingById.set(a.assetId, a);
 
-      p.assets = verifiedAssets
+      // filter tombstoned
+      const blobAssets = blobAssetsAll.filter((ba) => !deleted.has(ba.assetId));
+
+      p.assets = blobAssets
         .map((ba) => {
           const prev = existingById.get(ba.assetId);
           return {
             assetId: ba.assetId,
             url: ba.url,
             bbox: prev?.bbox ?? { x: 0, y: 0, w: 0, h: 0 },
-            tags: prev?.tags
-          };
+            tags: prev?.tags,
+          } as PageAsset;
         })
         .sort((a, b) => a.assetId.localeCompare(b.assetId));
+
+      // keep deletedAssetIds normalized
+      (p as any).deletedAssetIds = Array.from(deleted).sort();
     }
 
     const newManifestUrl = await saveManifest(manifest);
 
-    return NextResponse.json({
-      ok: true,
-      manifestUrl: newManifestUrl
-    });
+    return NextResponse.json({ ok: true, manifestUrl: newManifestUrl });
   } catch (e) {
-    return NextResponse.json({ ok: false, error: e instanceof Error ? e.message : String(e) }, { status: 500 });
+    return NextResponse.json(
+      { ok: false, error: e instanceof Error ? e.message : String(e) },
+      { status: 500 }
+    );
   }
 }
