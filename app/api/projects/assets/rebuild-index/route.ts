@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { list, get } from "@vercel/blob"; // Added 'get' for direct origin reads
+import { list } from "@vercel/blob"; 
 import { saveManifest, type ProjectManifest, type PageAsset, type AssetBBox } from "@/app/lib/manifest";
 
 export const runtime = "nodejs";
@@ -16,18 +16,26 @@ type ListResult = {
 };
 
 /**
- * FIX 1: Bypass the CDN/Edge Cache.
- * Reading directly from the storage origin ensures we don't start with 
- * a stale version of the manifest.
+ * FIX 1: Direct Origin Read
+ * Instead of SDK 'get', we use fetch with headers that force Vercel 
+ * to bypass the Edge Network and hit the blob storage directly.
  */
 async function fetchManifestDirect(url: string): Promise<ProjectManifest> {
-  try {
-    const { body } = await get(url); // Direct SDK read from Blob origin
-    const content = await new Response(body).json();
-    return content as ProjectManifest;
-  } catch (error) {
-    throw new Error(`Failed to read manifest directly from Blob storage: ${error}`);
+  const cacheBuster = `${url}${url.includes('?') ? '&' : '?'}v=${Date.now()}`;
+  
+  const res = await fetch(cacheBuster, { 
+    cache: "no-store",
+    headers: {
+      'Cache-Control': 'no-cache',
+      'Pragma': 'no-cache'
+    }
+  });
+
+  if (!res.ok) {
+    throw new Error(`Failed to read manifest directly: ${res.statusText}`);
   }
+  
+  return (await res.json()) as ProjectManifest;
 }
 
 function parseAssetPath(pathname: string) {
@@ -54,7 +62,7 @@ export async function POST(req: Request): Promise<Response> {
       return NextResponse.json({ ok: false, error: "Missing projectId/manifestUrl" }, { status: 400 });
     }
 
-    // Use the direct fetch instead of URL fetch to avoid CDN ghosting
+    // Use the direct fetch to avoid CDN ghosting
     const manifest = await fetchManifestDirect(manifestUrl);
     
     if (manifest.projectId !== projectId) {
@@ -106,23 +114,19 @@ export async function POST(req: Request): Promise<Response> {
 
     manifest.pages.sort((a, b) => a.pageNumber - b.pageNumber);
 
-    let pagesTouched = 0;
-    let totalAssetsAfter = 0;
-
     for (const p of manifest.pages) {
       const blobAssetsAll = foundByPage.get(p.pageNumber) ?? [];
       const deleted = new Set<string>(Array.isArray(p.deletedAssetIds) ? p.deletedAssetIds : []);
 
       /**
        * FIX 2: Verify Assets with HEAD Requests.
-       * Even if 'list()' finds the file, the CDN might still be propagating the deletion.
+       * Even if 'list()' finds the file, the CDN might still be propagating.
        * Checking the status ensures we don't re-index a file that is actually gone.
        */
       const verifiedAssets = [];
       for (const ba of blobAssetsAll) {
         if (deleted.has(ba.assetId)) continue;
 
-        // Fast HEAD request to verify file existence
         const check = await fetch(ba.url, { method: 'HEAD', cache: 'no-store' });
         if (check.status !== 404) {
           verifiedAssets.push(ba);
@@ -143,18 +147,13 @@ export async function POST(req: Request): Promise<Response> {
           };
         })
         .sort((a, b) => a.assetId.localeCompare(b.assetId));
-
-      pagesTouched += 1;
-      totalAssetsAfter += p.assets.length;
     }
 
     const newManifestUrl = await saveManifest(manifest);
 
     return NextResponse.json({
       ok: true,
-      manifestUrl: newManifestUrl,
-      pagesTouched,
-      totalAssetsAfter
+      manifestUrl: newManifestUrl
     });
   } catch (e) {
     return NextResponse.json({ ok: false, error: e instanceof Error ? e.message : String(e) }, { status: 500 });
