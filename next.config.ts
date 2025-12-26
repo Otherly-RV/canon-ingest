@@ -1,13 +1,8 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  // Required for native modules to work on Vercel
-  serverExternalPackages: [
-    "@google-cloud/documentai",
-    "google-auth-library",
-    "sharp",
-    "@napi-rs/canvas"
-  ],
+  // Keep google-auth-library external to avoid bundling issues
+  serverExternalPackages: ["google-auth-library"],
 };
 
 export default nextConfig;

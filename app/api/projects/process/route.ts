@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
 import { put } from "@vercel/blob";
-import { DocumentProcessorServiceClient } from "@google-cloud/documentai";
 import { saveManifest, fetchManifestDirect } from "@/app/lib/manifest";
+import { GoogleAuth } from "google-auth-library";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 60; // Allow up to 60 seconds for large PDFs
+export const maxDuration = 60;
 
 type Body = {
   projectId?: string;
@@ -44,67 +44,92 @@ function safeString(x: unknown): string {
   return typeof x === "string" ? x : "";
 }
 
-function stripUndefined(obj: unknown): unknown {
-  // keep JSON smaller and stable; optional
-  return obj;
+// Get OAuth2 access token using service account
+async function getAccessToken(): Promise<string> {
+  const saRaw = mustEnv("GCP_SA_KEY_JSON");
+  const sa = JSON.parse(saRaw) as { client_email?: string; private_key?: string };
+  
+  if (!sa.client_email || !sa.private_key) {
+    throw new Error("GCP_SA_KEY_JSON missing client_email/private_key");
+  }
+
+  const auth = new GoogleAuth({
+    credentials: {
+      client_email: sa.client_email,
+      private_key: sa.private_key,
+    },
+    scopes: ["https://www.googleapis.com/auth/cloud-platform"],
+  });
+
+  const client = await auth.getClient();
+  const tokenResponse = await client.getAccessToken();
+  
+  if (!tokenResponse.token) {
+    throw new Error("Failed to get access token");
+  }
+  
+  return tokenResponse.token;
 }
 
+// Call Document AI REST API
 async function processWithDocAI(pdfBytes: Buffer): Promise<{ fullText: string; raw: unknown }> {
   const projectId = mustEnv("GCP_PROJECT_ID");
   const location = mustEnv("DOCAI_LOCATION");
   const processorId = mustEnv("DOCAI_PROCESSOR_ID");
-  const saRaw = mustEnv("GCP_SA_KEY_JSON");
 
-  const sa = JSON.parse(saRaw) as { client_email?: string; private_key?: string };
-  if (!sa.client_email || !sa.private_key) throw new Error("GCP_SA_KEY_JSON missing client_email/private_key");
-
-  const client = new DocumentProcessorServiceClient({
-    apiEndpoint: `${location}-documentai.googleapis.com`,
-    credentials: {
-      client_email: sa.client_email,
-      private_key: sa.private_key
-    }
-  });
-
-  const name = `projects/${projectId}/locations/${location}/processors/${processorId}`;
+  const accessToken = await getAccessToken();
+  
+  const endpoint = `https://${location}-documentai.googleapis.com/v1/projects/${projectId}/locations/${location}/processors/${processorId}:process`;
+  
   const content = pdfBytes.toString("base64");
 
-  // Process the document - for PDFs over 15 pages, we need to chunk
-  // First try processing the whole document
-  try {
-    const [result] = await client.processDocument({
-      name,
-      rawDocument: { content, mimeType: "application/pdf" },
-      skipHumanReview: true
-    });
+  const requestBody = {
+    rawDocument: {
+      content,
+      mimeType: "application/pdf"
+    },
+    skipHumanReview: true
+  };
 
-    const raw = result as unknown;
-    const doc = (result.document ?? null) as { text?: unknown } | null;
-    const fullText = safeString(doc?.text);
+  const res = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(requestBody),
+  });
 
-    return { fullText, raw };
-  } catch (err) {
-    const errMsg = err instanceof Error ? err.message : String(err);
+  if (!res.ok) {
+    const errorText = await readErrorText(res);
     
-    // If page limit exceeded, process in chunks
-    if (errMsg.includes("exceed the limit") || errMsg.includes("15")) {
-      return processInChunks(client, name, content);
+    // Check if it's a page limit error
+    if (errorText.includes("exceed") || errorText.includes("15")) {
+      return processInChunks(pdfBytes, accessToken, endpoint);
     }
     
-    throw err;
+    throw new Error(`Document AI error (${res.status}): ${errorText}`);
   }
+
+  const result = await res.json();
+  const doc = result.document as { text?: string } | undefined;
+  const fullText = safeString(doc?.text);
+
+  return { fullText, raw: result };
 }
 
+// Process large PDFs in chunks using page selector
 async function processInChunks(
-  client: DocumentProcessorServiceClient,
-  name: string,
-  content: string
+  pdfBytes: Buffer,
+  accessToken: string,
+  baseEndpoint: string
 ): Promise<{ fullText: string; raw: unknown }> {
   const CHUNK_SIZE = 15;
   const allTexts: string[] = [];
   const allRaws: unknown[] = [];
   let pageOffset = 1;
   let hasMorePages = true;
+  const content = pdfBytes.toString("base64");
 
   while (hasMorePages && pageOffset <= 200) {
     const pages: number[] = [];
@@ -112,17 +137,38 @@ async function processInChunks(
       pages.push(pageOffset + i);
     }
 
+    const requestBody = {
+      rawDocument: {
+        content,
+        mimeType: "application/pdf"
+      },
+      skipHumanReview: true,
+      processOptions: {
+        individualPageSelector: { pages }
+      }
+    };
+
     try {
-      const [result] = await client.processDocument({
-        name,
-        rawDocument: { content, mimeType: "application/pdf" },
-        skipHumanReview: true,
-        processOptions: {
-          individualPageSelector: { pages }
-        }
+      const res = await fetch(baseEndpoint, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(requestBody),
       });
 
-      const doc = (result.document ?? null) as { text?: unknown; pages?: unknown[] } | null;
+      if (!res.ok) {
+        const errorText = await readErrorText(res);
+        if (errorText.includes("page") || errorText.includes("INVALID_ARGUMENT") || errorText.includes("out of range")) {
+          hasMorePages = false;
+          continue;
+        }
+        throw new Error(`Document AI chunk error (${res.status}): ${errorText}`);
+      }
+
+      const result = await res.json();
+      const doc = result.document as { text?: string; pages?: unknown[] } | undefined;
       const chunkText = safeString(doc?.text);
 
       if (chunkText.trim()) {
@@ -177,7 +223,7 @@ export async function POST(req: Request): Promise<Response> {
     // 1) Download source PDF bytes
     const pdfBytes = await fetchPdfBytes(sourceUrl);
 
-    // 2) Document AI
+    // 2) Document AI via REST API
     const { fullText, raw } = await processWithDocAI(pdfBytes);
 
     // 3) Store extracted text
@@ -188,7 +234,7 @@ export async function POST(req: Request): Promise<Response> {
     });
 
     // 4) Store raw DocAI JSON
-    const rawJson = JSON.stringify(stripUndefined(raw), null, 2);
+    const rawJson = JSON.stringify(raw, null, 2);
     const docAiBlob = await put(`projects/${projectId}/extracted/docai.json`, rawJson, {
       access: "public",
       contentType: "application/json",
@@ -196,7 +242,6 @@ export async function POST(req: Request): Promise<Response> {
     });
 
     // 5) Update manifest
-    // Re-fetch latest manifest to avoid race conditions
     const latest = await fetchManifestDirect(manifestUrl);
     if (latest.projectId !== projectId) {
       return NextResponse.json({ ok: false, error: "projectId does not match manifest on re-fetch" }, { status: 400 });
