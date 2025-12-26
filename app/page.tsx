@@ -182,7 +182,8 @@ function Tabs({
         gap: 8,
         alignItems: "center",
         flexWrap: "wrap",
-        maxWidth: "100%",
+        minWidth: 0,
+        flex: 1,
         overflow: "hidden"
       }}
     >
@@ -1387,8 +1388,8 @@ export default function Page() {
         </div>
 
         {settingsOpen && (
-          <div style={{ padding: "0 14px 14px 14px" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
+          <div style={{ padding: "0 14px 14px 14px", overflow: "hidden" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", overflow: "hidden" }}>
               <Tabs value={settingsTab} onChange={setSettingsTab} />
 
               <button
