@@ -719,28 +719,26 @@ export default function Page() {
       return;
     }
 
-    // Count untagged assets
-    let untagged = 0;
+    // Count total assets
+    let totalAssets = 0;
     for (const p of manifest.pages) {
-      for (const a of p.assets ?? []) {
-        if (!Array.isArray(a.tags) || a.tags.length === 0) untagged += 1;
-      }
+      totalAssets += (p.assets ?? []).length;
     }
 
-    if (untagged === 0) {
-      log("All assets already tagged.");
+    if (totalAssets === 0) {
+      log("No assets to tag.");
       return;
     }
 
     setBusy("Tagging assets...");
-    setTaggingProgress({ running: true, total: untagged, tagged: 0 });
-    log(`Starting tagging of ${untagged} untagged assets...`);
+    setTaggingProgress({ running: true, total: totalAssets, tagged: 0 });
+    log(`Starting tagging of ${totalAssets} assets (overwrite mode)...`);
 
     try {
       const r = await fetch("/api/projects/assets/tag", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectId, manifestUrl })
+        body: JSON.stringify({ projectId, manifestUrl, overwrite: true })
       });
 
       const j = (await r.json()) as {
