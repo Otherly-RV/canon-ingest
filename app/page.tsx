@@ -552,9 +552,9 @@ export default function Page() {
     if (!projectId || !manifestUrl) return setLastError("Missing projectId/manifestUrl");
     if (busy) return;
 
-    setBusy("Tagging images...");
+    setBusy("Tagging images (AI)...");
     try {
-      const r = await fetch("/api/projects/tag-images", {
+      const r = await fetch("/api/projects/assets/tag", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ projectId, manifestUrl })
