@@ -47,6 +47,9 @@ export type ProjectManifest = {
   sourcePdf?: { url: string; filename: string };
   extractedText?: { url: string };
 
+  // Cached Gemini-formatted text
+  formattedText?: { url: string };
+
   // NEW: raw Document AI JSON stored in Blob (used for detection)
   docAiJson?: { url: string };
 

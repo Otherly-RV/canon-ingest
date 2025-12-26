@@ -19,6 +19,7 @@ type Manifest = {
   status: "empty" | "uploaded" | "processed";
   sourcePdf?: { url: string; filename: string };
   extractedText?: { url: string };
+  formattedText?: { url: string };
   docAiJson?: { url: string };
   pages?: Array<{
     pageNumber: number;
@@ -768,28 +769,49 @@ export default function Page() {
     log("Loading extracted text...");
 
     try {
+      // Load raw extracted text
       const res = await fetch(manifest.extractedText.url);
       if (!res.ok) throw new Error(`Failed to fetch text: ${res.status}`);
       const raw = await res.text();
       setExtractedText(raw);
       log(`Loaded ${raw.length} chars of extracted text`);
 
-      // Now format with Gemini
+      // Check if we have cached formatted text
+      if (manifest.formattedText?.url) {
+        log("Loading cached formatted text...");
+        const cachedRes = await fetch(manifest.formattedText.url);
+        if (cachedRes.ok) {
+          const cachedText = await cachedRes.text();
+          setFormattedText(cachedText);
+          log("Loaded cached formatted text");
+          setTextPanelOpen(true);
+          return;
+        }
+        log("Failed to load cached text, re-formatting...");
+      }
+
+      // Format with Gemini and cache the result
       log("Formatting with Gemini...");
       const fRes = await fetch("/api/projects/format-text", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: raw })
+        body: JSON.stringify({ projectId, manifestUrl, text: raw })
       });
 
       if (!fRes.ok) {
         log("Gemini formatting failed, showing raw text");
         setFormattedText(raw);
       } else {
-        const fj = (await fRes.json()) as { ok: boolean; formatted?: string; error?: string };
+        const fj = (await fRes.json()) as { ok: boolean; formatted?: string; manifestUrl?: string; error?: string };
         if (fj.ok && fj.formatted) {
           setFormattedText(fj.formatted);
-          log("Text formatted successfully");
+          log("Text formatted and cached successfully");
+          // Update manifest URL if it changed (due to caching)
+          if (fj.manifestUrl) {
+            setManifestUrl(fj.manifestUrl);
+            setUrlParams(projectId, fj.manifestUrl);
+            await loadManifest(fj.manifestUrl);
+          }
         } else {
           log(fj.error || "Format failed, showing raw");
           setFormattedText(raw);

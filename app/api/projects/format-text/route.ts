@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import { put } from "@vercel/blob";
+import { fetchManifestDirect, saveManifest } from "@/app/lib/manifest";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -8,6 +10,8 @@ const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "";
 const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.0-flash";
 
 type Body = {
+  projectId?: string;
+  manifestUrl?: string;
   text?: string;
 };
 
@@ -15,6 +19,8 @@ export async function POST(req: NextRequest) {
   try {
     const body = (await req.json()) as Body;
     const text = String(body.text || "").trim();
+    const projectId = body.projectId;
+    const manifestUrl = body.manifestUrl;
 
     if (!text) {
       return NextResponse.json({ ok: false, error: "Missing text" }, { status: 400 });
@@ -48,6 +54,29 @@ ${text}
 
     const result = await model.generateContent(prompt);
     const formatted = result.response.text().trim();
+
+    // If projectId and manifestUrl provided, cache the formatted text
+    if (projectId && manifestUrl) {
+      try {
+        // Save formatted text to blob
+        const formattedBlob = await put(
+          `projects/${projectId}/formatted-text.txt`,
+          formatted,
+          { access: "public", contentType: "text/plain", addRandomSuffix: false }
+        );
+
+        // Update manifest with formatted text URL
+        const manifest = await fetchManifestDirect(manifestUrl);
+        manifest.formattedText = { url: formattedBlob.url };
+        const newManifestUrl = await saveManifest(manifest);
+
+        return NextResponse.json({ ok: true, formatted, manifestUrl: newManifestUrl });
+      } catch (cacheErr) {
+        console.error("Failed to cache formatted text:", cacheErr);
+        // Still return the formatted text even if caching failed
+        return NextResponse.json({ ok: true, formatted });
+      }
+    }
 
     return NextResponse.json({ ok: true, formatted });
   } catch (err) {
