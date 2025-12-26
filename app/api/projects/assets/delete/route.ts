@@ -99,9 +99,15 @@ export async function POST(req: Request): Promise<Response> {
     const uniqUrls = Array.from(new Set(urlsToDelete));
     if (uniqUrls.length > 0) await del(uniqUrls);
 
+    // Re-fetch latest manifest to avoid race conditions
+    const latest = await fetchManifest(manifestUrl);
+    if (latest.projectId !== projectId) {
+      throw new Error("projectId does not match manifest on re-fetch");
+    }
+
     // Remove from manifest + tombstone it (prevents later background saves from resurrecting it)
-    if (Array.isArray(manifest.pages)) {
-      const p = manifest.pages.find((x) => x.pageNumber === pageNumber);
+    if (Array.isArray(latest.pages)) {
+      const p = latest.pages.find((x) => x.pageNumber === pageNumber);
       if (p) {
         if (Array.isArray(p.assets)) p.assets = p.assets.filter((a) => a.assetId !== assetId);
         if (!Array.isArray(p.deletedAssetIds)) p.deletedAssetIds = [];
@@ -109,7 +115,7 @@ export async function POST(req: Request): Promise<Response> {
       }
     }
 
-    const newManifestUrl = await saveManifest(manifest);
+    const newManifestUrl = await saveManifest(latest);
 
     return NextResponse.json({
       ok: true,

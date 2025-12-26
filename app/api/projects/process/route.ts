@@ -136,11 +136,17 @@ export async function POST(req: Request): Promise<Response> {
     });
 
     // 5) Update manifest
-    manifest.extractedText = { url: textBlob.url };
-    manifest.docAiJson = { url: docAiBlob.url };
-    manifest.status = "processed";
+    // Re-fetch latest manifest to avoid race conditions
+    const latest = await fetchManifest(manifestUrl);
+    if (latest.projectId !== projectId) {
+      return NextResponse.json({ ok: false, error: "projectId does not match manifest on re-fetch" }, { status: 400 });
+    }
 
-    const newManifestUrl = await saveManifest(manifest);
+    latest.extractedText = { url: textBlob.url };
+    latest.docAiJson = { url: docAiBlob.url };
+    latest.status = "processed";
+
+    const newManifestUrl = await saveManifest(latest);
 
     return NextResponse.json({ ok: true, manifestUrl: newManifestUrl });
   } catch (e) {

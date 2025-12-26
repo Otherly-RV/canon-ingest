@@ -62,26 +62,39 @@ export async function POST(req: Request): Promise<Response> {
     let checked = 0;
     let removed = 0;
     let unknown = 0;
+    const toRemove = new Set<string>();
 
     if (Array.isArray(manifest.pages)) {
       for (const p of manifest.pages) {
         if (!Array.isArray(p.assets) || p.assets.length === 0) continue;
 
-        const keep: typeof p.assets = [];
         for (const a of p.assets) {
           checked += 1;
           const st = await existsDefinitely(a.url);
-          if (st === "missing") removed += 1;
-          else {
-            if (st === "unknown") unknown += 1;
-            keep.push(a);
+          if (st === "missing") {
+            removed += 1;
+            toRemove.add(`${p.pageNumber}-${a.assetId}`);
+          } else if (st === "unknown") {
+            unknown += 1;
           }
         }
-        p.assets = keep;
       }
     }
 
-    const newManifestUrl = await saveManifest(manifest);
+    // Re-fetch latest manifest to avoid race conditions
+    const latest = await fetchManifest(manifestUrl);
+    if (latest.projectId !== projectId) {
+      return NextResponse.json({ ok: false, error: "projectId does not match manifest on re-fetch" }, { status: 400 });
+    }
+
+    if (Array.isArray(latest.pages)) {
+      for (const p of latest.pages) {
+        if (!Array.isArray(p.assets)) continue;
+        p.assets = p.assets.filter((a) => !toRemove.has(`${p.pageNumber}-${a.assetId}`));
+      }
+    }
+
+    const newManifestUrl = await saveManifest(latest);
     return NextResponse.json({ ok: true, manifestUrl: newManifestUrl, checked, removed, unknown });
   } catch (e) {
     return NextResponse.json({ ok: false, error: e instanceof Error ? e.message : String(e) }, { status: 500 });

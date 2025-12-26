@@ -64,14 +64,20 @@ export async function POST(req: Request): Promise<Response> {
     return NextResponse.json({ ok: false, error: "projectId does not match manifest" }, { status: 400 });
   }
 
-  if (!manifest.settings) {
-    manifest.settings = { aiRules: "", uiFieldsJson: "{}", taggingJson: "{}" };
+  // Re-fetch latest manifest to avoid race conditions
+  const latest = await fetchManifest(manifestUrlRaw);
+  if (latest.projectId !== projectId) {
+    return NextResponse.json({ ok: false, error: "projectId does not match manifest on re-fetch" }, { status: 400 });
   }
 
-  if (typeof body.aiRules === "string") manifest.settings.aiRules = body.aiRules;
-  if (typeof body.taggingJson === "string") manifest.settings.taggingJson = body.taggingJson;
+  if (!latest.settings) {
+    latest.settings = { aiRules: "", uiFieldsJson: "{}", taggingJson: "{}" };
+  }
 
-  const newManifestUrl = await saveManifest(manifest);
+  if (typeof body.aiRules === "string") latest.settings.aiRules = body.aiRules;
+  if (typeof body.taggingJson === "string") latest.settings.taggingJson = body.taggingJson;
+
+  const newManifestUrl = await saveManifest(latest);
 
   return NextResponse.json({ ok: true, manifestUrl: newManifestUrl });
 }
