@@ -1783,11 +1783,21 @@ export default function Page() {
         error?: string;
         considered?: number;
         tagged?: number;
+        failed?: number;
+        errors?: Array<{ pageNumber: number; assetId: string; error: string }>;
       };
 
       if (!r.ok || !j.ok || !j.manifestUrl) throw new Error(j.error || `Tagging failed (${r.status})`);
 
-      log(`Tagging complete: ${j.tagged} assets tagged out of ${j.considered} considered`);
+      let logMsg = `Tagging complete: ${j.tagged} assets tagged out of ${j.considered} considered`;
+      if (j.failed && j.failed > 0) {
+        logMsg += ` (${j.failed} failed)`;
+        if (j.errors && j.errors.length > 0) {
+          const firstErr = j.errors[0];
+          log(`First error: ${firstErr.assetId} - ${firstErr.error}`);
+        }
+      }
+      log(logMsg);
       setTaggingProgress((s) => ({ ...s, tagged: j.tagged ?? 0 }));
 
       setManifestUrl(j.manifestUrl);

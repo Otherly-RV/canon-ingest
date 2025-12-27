@@ -13,6 +13,7 @@ type Body = {
 };
 
 type TagUpdate = { pageNumber: number; assetId: string; tags: string[]; rationale: string };
+type TagError = { pageNumber: number; assetId: string; error: string };
 
 function mustEnv(name: string): string {
   const v = process.env[name];
@@ -303,21 +304,32 @@ export async function POST(req: Request): Promise<Response> {
       return NextResponse.json({ ok: false, error: "Missing projectId/manifestUrl" }, { status: 400 });
     }
 
-    const GEMINI_API_KEY = mustEnv("GEMINI_API_KEY");
+    let GEMINI_API_KEY: string;
+    try {
+      GEMINI_API_KEY = mustEnv("GEMINI_API_KEY");
+    } catch {
+      return NextResponse.json({ ok: false, error: "GEMINI_API_KEY not configured on server" }, { status: 500 });
+    }
     // Default to a modern model name; you can override via env
     const GEMINI_DETECT_MODEL = optEnv("GEMINI_DETECT_MODEL", "gemini-2.0-flash");
 
     // NOTE: We will *not* save this manifest directly at the end.
     // Tagging can take time, and the user may delete assets while it's running.
     // If we save the stale manifest, we can resurrect deleted assets.
-    const manifest = await fetchJson<ProjectManifest>(manifestUrl);
+    let manifest: ProjectManifest;
+    try {
+      manifest = await fetchJson<ProjectManifest>(manifestUrl);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return NextResponse.json({ ok: false, error: `Failed to fetch manifest: ${msg}` }, { status: 500 });
+    }
 
     if (manifest.projectId !== projectId) {
       return NextResponse.json({ ok: false, error: "projectId does not match manifest" }, { status: 400 });
     }
 
     if (!manifest.extractedText?.url) {
-      return NextResponse.json({ ok: false, error: "No extractedText in manifest" }, { status: 400 });
+      return NextResponse.json({ ok: false, error: "No extractedText in manifest. Please process the document first." }, { status: 400 });
     }
 
     if (!manifest.pages || !Array.isArray(manifest.pages) || manifest.pages.length === 0) {
@@ -325,7 +337,13 @@ export async function POST(req: Request): Promise<Response> {
     }
 
     // Full text (fallback) — later you can store per-page text in DocAI JSON
-    const fullText = await fetchText(manifest.extractedText.url);
+    let fullText: string;
+    try {
+      fullText = await fetchText(manifest.extractedText.url);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return NextResponse.json({ ok: false, error: `Failed to fetch extracted text: ${msg}` }, { status: 500 });
+    }
 
     const aiRules = manifest.settings?.aiRules ?? "";
     const taggingJson = manifest.settings?.taggingJson ?? "{}";
@@ -333,6 +351,7 @@ export async function POST(req: Request): Promise<Response> {
     let totalConsidered = 0;
     let totalTagged = 0;
     const updates: TagUpdate[] = [];
+    const errors: TagError[] = [];
 
     for (const page of manifest.pages) {
       const pageNumber = page.pageNumber;
@@ -351,19 +370,25 @@ export async function POST(req: Request): Promise<Response> {
         const alreadyTagged = Array.isArray(asset.tags) && asset.tags.length > 0;
         if (alreadyTagged && !overwrite) continue;
 
-        const { tags, rationale } = await callGeminiTagger({
-          apiKey: GEMINI_API_KEY,
-          modelName: GEMINI_DETECT_MODEL,
-          aiRules,
-          taggingJson,
-          pageNumber,
-          assetId: asset.assetId,
-          assetUrl: asset.url,
-          pageText
-        });
+        try {
+          const { tags, rationale } = await callGeminiTagger({
+            apiKey: GEMINI_API_KEY,
+            modelName: GEMINI_DETECT_MODEL,
+            aiRules,
+            taggingJson,
+            pageNumber,
+            assetId: asset.assetId,
+            assetUrl: asset.url,
+            pageText
+          });
 
-        updates.push({ pageNumber, assetId: asset.assetId, tags, rationale });
-        totalTagged += 1;
+          updates.push({ pageNumber, assetId: asset.assetId, tags, rationale });
+          totalTagged += 1;
+        } catch (assetErr) {
+          // Log the error but continue with other assets
+          const errMsg = assetErr instanceof Error ? assetErr.message : String(assetErr);
+          errors.push({ pageNumber, assetId: asset.assetId, error: errMsg });
+        }
       }
 
       if (limitAssets > 0 && totalConsidered > limitAssets) break;
@@ -390,6 +415,8 @@ export async function POST(req: Request): Promise<Response> {
       manifestUrl: newManifestUrl,
       considered: totalConsidered,
       tagged: totalTagged,
+      failed: errors.length,
+      errors: errors.length > 0 ? errors.slice(0, 10) : undefined, // Limit to first 10 errors
       model: GEMINI_DETECT_MODEL
     });
   } catch (e) {
