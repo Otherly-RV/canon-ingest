@@ -480,17 +480,18 @@ function NestedField({
         <div style={{ fontSize: 10, fontWeight: 600, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>
           {formatFieldName(fieldName)}
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           <img
             src={asset.url}
             alt={asset.caption || fieldName}
             style={{
-              width: 64,
-              height: 64,
-              objectFit: "cover",
+              maxWidth: "100%",
+              maxHeight: 300,
+              objectFit: "contain",
               borderRadius: 8,
               border: "2px solid #e2e8f0",
-              boxShadow: "0 2px 4px rgba(0,0,0,0.1)"
+              boxShadow: "0 2px 4px rgba(0,0,0,0.1)",
+              background: "#f8fafc"
             }}
           />
           {asset.caption && <span style={{ fontSize: 13, color: "#64748b" }}>{asset.caption}</span>}
@@ -660,25 +661,26 @@ function ObjectCard({
             src={leadImage.url}
             alt={String(nameField)}
             style={{
-              width: 80,
-              height: 80,
-              objectFit: "cover",
+              width: 160,
+              height: 160,
+              objectFit: "contain",
               borderRadius: 12,
               border: "3px solid #fff",
-              boxShadow: "0 4px 12px rgba(0,0,0,0.15)"
+              boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+              background: "#f8fafc"
             }}
           />
         ) : (
           <div
             style={{
-              width: 80,
-              height: 80,
+              width: 160,
+              height: 160,
               borderRadius: 12,
               background: `linear-gradient(135deg, ${colors.light} 0%, ${colors.bg} 100%)`,
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
-              fontSize: 28,
+              fontSize: 48,
               color: colors.accent,
               fontWeight: 700,
               border: `2px solid ${colors.light}`
