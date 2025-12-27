@@ -424,7 +424,51 @@ function SchemaCard({
     );
   }
 
-  // Handle array of strings (tags)
+  // Handle hex color array (ExtractedPalette) - render as circular swatches
+  const isHexColorArray = Array.isArray(value) && 
+    value.length > 0 && 
+    value.every((v) => typeof v === "string" && /^#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$/.test(v as string));
+
+  if (isHexColorArray) {
+    const hexColors = value as string[];
+    return (
+      <div
+        style={{
+          background: "#fff",
+          borderRadius: 12,
+          padding: 16,
+          boxShadow: "0 1px 3px rgba(0,0,0,0.08)",
+          border: "1px solid #e2e8f0"
+        }}
+      >
+        <div style={{ fontSize: 11, fontWeight: 600, color: colors.accent, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 12 }}>
+          {formatFieldName(fieldName)}
+        </div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center" }}>
+          {hexColors.map((hex, i) => (
+            <div
+              key={i}
+              title={hex}
+              style={{
+                width: 44,
+                height: 44,
+                borderRadius: "50%",
+                background: hex,
+                border: "3px solid #fff",
+                boxShadow: "0 2px 8px rgba(0,0,0,0.15)",
+                cursor: "pointer",
+                transition: "transform 0.15s"
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.transform = "scale(1.15)")}
+              onMouseLeave={(e) => (e.currentTarget.style.transform = "scale(1)")}
+            />
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  // Handle array of strings (tags) - but not hex colors
   if (Array.isArray(value) && value.every((v) => typeof v === "string")) {
     return (
       <div
@@ -625,7 +669,43 @@ function NestedField({
     );
   }
 
-  // Handle string array
+  // Handle hex color array (ExtractedPalette) - render as circular swatches
+  const isHexColorArray = Array.isArray(value) && 
+    value.length > 0 && 
+    value.every((v) => typeof v === "string" && /^#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$/.test(v as string));
+
+  if (isHexColorArray) {
+    const hexColors = value as string[];
+    return (
+      <div>
+        <div style={{ fontSize: 10, fontWeight: 600, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>
+          {formatFieldName(fieldName)}
+        </div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
+          {hexColors.map((hex, i) => (
+            <div
+              key={i}
+              title={hex}
+              style={{
+                width: 36,
+                height: 36,
+                borderRadius: "50%",
+                background: hex,
+                border: "2px solid #fff",
+                boxShadow: "0 2px 6px rgba(0,0,0,0.15)",
+                cursor: "pointer",
+                transition: "transform 0.15s"
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.transform = "scale(1.15)")}
+              onMouseLeave={(e) => (e.currentTarget.style.transform = "scale(1)")}
+            />
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  // Handle string array (but not hex colors which are handled above)
   if (Array.isArray(value) && value.every((v) => typeof v === "string")) {
     if (value.length === 0) return null;
     return (
@@ -729,12 +809,25 @@ function NestedField({
     );
   }
 
+  // Fallback - better handling to avoid [object Object]
+  const displayValue = (() => {
+    if (value === null || value === undefined) return "—";
+    if (typeof value === "object") {
+      try {
+        return JSON.stringify(value, null, 2);
+      } catch {
+        return "[Complex object]";
+      }
+    }
+    return String(value);
+  })();
+
   return (
     <div>
       <div style={{ fontSize: 10, fontWeight: 600, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>
         {formatFieldName(fieldName)}
       </div>
-      <div style={{ fontSize: 14, color: "#1e293b" }}>{value === null ? "—" : String(value)}</div>
+      <div style={{ fontSize: 14, color: "#1e293b", whiteSpace: "pre-wrap" }}>{displayValue}</div>
     </div>
   );
 }

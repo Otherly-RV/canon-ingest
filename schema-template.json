@@ -1,6 +1,6 @@
 {
   "schemaId": "otherly-ipbible",
-  "version": "0.2.0",
+  "version": "0.4.0",
   "levels": ["L1", "L2", "L3"],
   "domains": ["OVERVIEW", "CHARACTERS", "WORLD", "LORE", "STYLE", "STORY"],
 
@@ -414,7 +414,9 @@
       "ref": { "kind": "ref" },
       "ref[]": { "kind": "array", "items": { "type": "ref" } },
       "asset": { "kind": "asset" },
-      "asset[]": { "kind": "array", "items": { "type": "asset" } }
+      "asset[]": { "kind": "array", "items": { "type": "asset" } },
+      "hexColor": { "kind": "scalar", "format": "hex-color", "pattern": "^#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$" },
+      "hexColor[]": { "kind": "array", "items": { "type": "hexColor" } }
     },
 
     "assets": {
@@ -630,7 +632,7 @@
               "PaletteSummary": { "type": "string", "required": false, "limits": { "use": "L2_LONG" }, "hint": "Color mood and palette description from asset analysis" },
               "ColorRules": { "type": "string[]", "required": false, "limits": { "maxItems": 12 }, "hint": "When to use which colors, associations" },
               "UsageExamples": { "type": "string[]", "required": false, "limits": { "maxItems": 12 } },
-              "ExtractedPalette": { "type": "string[]", "required": false, "limits": { "maxItems": 24 }, "hint": "Color names/hex codes mentioned in asset tags" }
+              "ExtractedPalette": { "type": "hexColor[]", "required": false, "limits": { "maxItems": 24 }, "ui": { "component": "colorSwatches", "shape": "circle" }, "hint": "Array of HEX colors like #0B0B0B. Render as circular swatches." }
             }
           },
           "TextureMaterialLanguage": {
