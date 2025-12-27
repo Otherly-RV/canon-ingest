@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "";
-const GEMINI_DETECT_MODEL = process.env.GEMINI_DETECT_MODEL || process.env.GEMINI_MODEL || "gemini-2.0-flash";
+const GEMINI_DETECT_MODEL = process.env.GEMINI_DETECT_MODEL || "gemini-2.0-flash";
 
 interface Box {
   x: number;

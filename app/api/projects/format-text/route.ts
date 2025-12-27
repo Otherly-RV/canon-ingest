@@ -7,7 +7,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "";
-const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.0-flash";
+const GEMINI_DETECT_MODEL = process.env.GEMINI_DETECT_MODEL || "gemini-2.0-flash";
 
 type Body = {
   projectId?: string;
@@ -31,7 +31,7 @@ export async function POST(req: NextRequest) {
     }
 
     const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-    const model = genAI.getGenerativeModel({ model: GEMINI_MODEL });
+    const model = genAI.getGenerativeModel({ model: GEMINI_DETECT_MODEL });
 
     const prompt = `You are a document formatting assistant. The following text was extracted from a scanned PDF using OCR. It may have:
 - Line breaks in the wrong places (mid-sentence)

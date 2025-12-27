@@ -305,7 +305,7 @@ export async function POST(req: Request): Promise<Response> {
 
     const GEMINI_API_KEY = mustEnv("GEMINI_API_KEY");
     // Default to a modern model name; you can override via env
-    const GEMINI_MODEL = optEnv("GEMINI_MODEL", "gemini-2.0-flash");
+    const GEMINI_DETECT_MODEL = optEnv("GEMINI_DETECT_MODEL", "gemini-2.0-flash");
 
     // NOTE: We will *not* save this manifest directly at the end.
     // Tagging can take time, and the user may delete assets while it's running.
@@ -353,7 +353,7 @@ export async function POST(req: Request): Promise<Response> {
 
         const { tags, rationale } = await callGeminiTagger({
           apiKey: GEMINI_API_KEY,
-          modelName: GEMINI_MODEL,
+          modelName: GEMINI_DETECT_MODEL,
           aiRules,
           taggingJson,
           pageNumber,
@@ -390,7 +390,7 @@ export async function POST(req: Request): Promise<Response> {
       manifestUrl: newManifestUrl,
       considered: totalConsidered,
       tagged: totalTagged,
-      model: GEMINI_MODEL
+      model: GEMINI_DETECT_MODEL
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
