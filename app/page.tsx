@@ -368,6 +368,37 @@ function SchemaResultsUI({
   );
 }
 
+// CSS named colors that browsers understand
+const CSS_NAMED_COLORS = new Set([
+  "aliceblue", "antiquewhite", "aqua", "aquamarine", "azure", "beige", "bisque", "black", "blanchedalmond", 
+  "blue", "blueviolet", "brown", "burlywood", "cadetblue", "chartreuse", "chocolate", "coral", "cornflowerblue", 
+  "cornsilk", "crimson", "cyan", "darkblue", "darkcyan", "darkgoldenrod", "darkgray", "darkgreen", "darkgrey", 
+  "darkkhaki", "darkmagenta", "darkolivegreen", "darkorange", "darkorchid", "darkred", "darksalmon", "darkseagreen", 
+  "darkslateblue", "darkslategray", "darkslategrey", "darkturquoise", "darkviolet", "deeppink", "deepskyblue", 
+  "dimgray", "dimgrey", "dodgerblue", "firebrick", "floralwhite", "forestgreen", "fuchsia", "gainsboro", 
+  "ghostwhite", "gold", "goldenrod", "gray", "green", "greenyellow", "grey", "honeydew", "hotpink", "indianred", 
+  "indigo", "ivory", "khaki", "lavender", "lavenderblush", "lawngreen", "lemonchiffon", "lightblue", "lightcoral", 
+  "lightcyan", "lightgoldenrodyellow", "lightgray", "lightgreen", "lightgrey", "lightpink", "lightsalmon", 
+  "lightseagreen", "lightskyblue", "lightslategray", "lightslategrey", "lightsteelblue", "lightyellow", "lime", 
+  "limegreen", "linen", "magenta", "maroon", "mediumaquamarine", "mediumblue", "mediumorchid", "mediumpurple", 
+  "mediumseagreen", "mediumslateblue", "mediumspringgreen", "mediumturquoise", "mediumvioletred", "midnightblue", 
+  "mintcream", "mistyrose", "moccasin", "navajowhite", "navy", "oldlace", "olive", "olivedrab", "orange", 
+  "orangered", "orchid", "palegoldenrod", "palegreen", "paleturquoise", "palevioletred", "papayawhip", "peachpuff", 
+  "peru", "pink", "plum", "powderblue", "purple", "rebeccapurple", "red", "rosybrown", "royalblue", "saddlebrown", 
+  "salmon", "sandybrown", "seagreen", "seashell", "sienna", "silver", "skyblue", "slateblue", "slategray", 
+  "slategrey", "snow", "springgreen", "steelblue", "tan", "teal", "thistle", "tomato", "turquoise", "violet", 
+  "wheat", "white", "whitesmoke", "yellow", "yellowgreen"
+]);
+
+// Check if a string is a valid CSS color (hex or named)
+function isValidCssColor(str: string): boolean {
+  if (typeof str !== "string") return false;
+  // Check hex format
+  if (/^#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{8}|[0-9A-Fa-f]{3})$/.test(str)) return true;
+  // Check named colors (case-insensitive)
+  return CSS_NAMED_COLORS.has(str.toLowerCase().trim());
+}
+
 // Individual card component for schema fields
 function SchemaCard({
   fieldName,
@@ -461,13 +492,14 @@ function SchemaCard({
     );
   }
 
-  // Handle hex color array (ExtractedPalette) - render as circular swatches
-  const isHexColorArray = Array.isArray(value) && 
+  // Handle color array (ExtractedPalette) - render as circular swatches
+  // Supports both hex codes (#FF0000) and CSS named colors (red, blue, etc.)
+  const isColorArray = Array.isArray(value) && 
     value.length > 0 && 
-    value.every((v) => typeof v === "string" && /^#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$/.test(v as string));
+    value.every((v) => typeof v === "string" && isValidCssColor(v as string));
 
-  if (isHexColorArray) {
-    const hexColors = value as string[];
+  if (isColorArray) {
+    const colorValues = value as string[];
     return (
       <div
         style={{
@@ -482,15 +514,15 @@ function SchemaCard({
           {formatFieldName(fieldName)}
         </div>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center" }}>
-          {hexColors.map((hex, i) => (
+          {colorValues.map((color, i) => (
             <div
               key={i}
-              title={hex}
+              title={color}
               style={{
                 width: 44,
                 height: 44,
                 borderRadius: "50%",
-                background: hex,
+                background: color,
                 border: "3px solid #fff",
                 boxShadow: "0 2px 8px rgba(0,0,0,0.15)",
                 cursor: "pointer",
@@ -706,28 +738,29 @@ function NestedField({
     );
   }
 
-  // Handle hex color array (ExtractedPalette) - render as circular swatches
-  const isHexColorArray = Array.isArray(value) && 
+  // Handle color array (ExtractedPalette) - render as circular swatches
+  // Supports both hex codes (#FF0000) and CSS named colors (red, blue, etc.)
+  const isColorArray = Array.isArray(value) && 
     value.length > 0 && 
-    value.every((v) => typeof v === "string" && /^#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$/.test(v as string));
+    value.every((v) => typeof v === "string" && isValidCssColor(v as string));
 
-  if (isHexColorArray) {
-    const hexColors = value as string[];
+  if (isColorArray) {
+    const colorValues = value as string[];
     return (
       <div>
         <div style={{ fontSize: 10, fontWeight: 600, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>
           {formatFieldName(fieldName)}
         </div>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
-          {hexColors.map((hex, i) => (
+          {colorValues.map((color, i) => (
             <div
               key={i}
-              title={hex}
+              title={color}
               style={{
                 width: 36,
                 height: 36,
                 borderRadius: "50%",
-                background: hex,
+                background: color,
                 border: "2px solid #fff",
                 boxShadow: "0 2px 6px rgba(0,0,0,0.15)",
                 cursor: "pointer",
@@ -742,7 +775,7 @@ function NestedField({
     );
   }
 
-  // Handle string array (but not hex colors which are handled above)
+  // Handle string array (but not colors which are handled above)
   if (Array.isArray(value) && value.every((v) => typeof v === "string")) {
     if (value.length === 0) return null;
     return (
