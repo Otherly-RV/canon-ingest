@@ -167,9 +167,9 @@ Return ONLY valid JSON with this exact structure:
 Fill ALL fields based on the schema definition. Match the field names exactly.`;
 
     // Call Gemini with high output token limit for large schema
-    const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-pro-preview-05-06";
+    const GEMINI_DETECT_MODEL = process.env.GEMINI_DETECT_MODEL || "gemini-2.0-flash";
     const model = genAI.getGenerativeModel({ 
-      model: GEMINI_MODEL,
+      model: GEMINI_DETECT_MODEL,
       generationConfig: {
         maxOutputTokens: 65536,  // Maximum output for large schema
         responseMimeType: "application/json",  // Ensure JSON output
