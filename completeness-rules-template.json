@@ -1,0 +1,236 @@
+{
+  "rulesId": "otherly-completeness",
+  "version": "0.2.0",
+  "description": "Scoring rubric for calculating schema completeness percentage",
+  
+  "scoring": {
+    "range": { "min": 0, "max": 100 },
+    "unit": "percent"
+  },
+  
+  "alerts": {
+    "RED": { "threshold": "<50", "message": "Insufficient baseline — upload more sources or fill key macro fields" },
+    "ORANGE": { "threshold": "<70", "message": "Review before production — address missing macro fields and key refs" },
+    "YELLOW": { "threshold": "70-79", "message": "Minor additions recommended" },
+    "GREEN": { "threshold": ">=80", "message": "Baseline is production-ready" }
+  },
+  
+  "weighting": {
+    "L2_macro": { "weight": 0.55, "description": "OVERVIEW + macro boards completeness" },
+    "L2_imagery": { "weight": 0.10, "description": "Reference imagery where schema includes it" },
+    "L3_production": { "weight": 0.35, "description": "Triggers/tags/packs + L3 story planning" }
+  },
+  
+  "minimumExpectations": {
+    "L1": {
+      "description": "Presence of KeyArtPoster slots per domain (generated or extracted)",
+      "required": ["OVERVIEW.KeyArtPoster", "CHARACTERS.KeyArtPoster", "WORLD.KeyArtPoster", "LORE.KeyArtPoster", "STYLE.KeyArtPoster", "STORY.KeyArtPoster"]
+    },
+    "L2": {
+      "description": "Core fields present and coherent with reference imagery",
+      "OVERVIEW": ["IPTitle", "Logline", "NarrativeEngine", "Tone", "MainCharacter", "Antagonist", "TheWorld"],
+      "CHARACTERS": ["CharacterList[].Name", "CharacterList[].RoleType", "CharacterList[].Images.LeadImage"],
+      "WORLD": ["Locations[].Name", "Locations[].Setting", "Locations[].Images.LeadImage"],
+      "LORE": ["LorePremise.Text", "HistoryTimeline.Text", "PowerStructuresFactions.Text"],
+      "STYLE": ["VisualStyle.StyleSummary", "VisualStyle.LeadImage", "ColorPalette.PaletteSummary", "ColorPalette.ExtractedPalette"],
+      "STORY": ["CanonTimelineTable.Beat[]", "ArcMap.Arc[]", "POVStructureRules.POVStrategy"]
+    },
+    "L3": {
+      "description": "Production-ready with triggers, tags, and detailed planning",
+      "CHARACTERS": ["CharacterList[].Gen.Trigger", "CharacterList[].Gen.Tags", "CharacterList[].Gen.NegativeTags", "CharacterList[].Visual", "CharacterList[].BehaviourRules"],
+      "WORLD": ["Locations[].Gen.Trigger", "Locations[].Gen.Tags", "Locations[].Meta"],
+      "LORE": ["Factions[].IngredientChecklist", "Factions[].Relationships"],
+      "STYLE": ["VisualIconography", "CameraAngle", "Lighting"],
+      "STORY": ["MasterTimeline.Beat[]", "FormatNarrative", "EpisodePack.Episode[]"]
+    }
+  },
+  
+  "fieldScoring": {
+    "L1": {
+      "OVERVIEW": { "KeyArtPoster": 16.67 },
+      "CHARACTERS": { "KeyArtPoster": 16.67 },
+      "WORLD": { "KeyArtPoster": 16.67 },
+      "LORE": { "KeyArtPoster": 16.67 },
+      "STYLE": { "KeyArtPoster": 16.67 },
+      "STORY": { "KeyArtPoster": 16.65 }
+    },
+    "L2": {
+      "OVERVIEW": {
+        "_weight": 20,
+        "IPTitle": 10,
+        "Logline": 20,
+        "NarrativeEngine": 15,
+        "Tone": 10,
+        "MainCharacter": 20,
+        "Antagonist": 15,
+        "TheWorld": 10
+      },
+      "CHARACTERS": {
+        "_weight": 20,
+        "_listField": "CharacterList",
+        "_perItem": {
+          "Name": 15,
+          "RoleType": 10,
+          "Headline": 10,
+          "StoryFunctionTags": 10,
+          "Images.LeadImage": 30,
+          "Images.SupportingImages": 15,
+          "Aliases": 10
+        }
+      },
+      "WORLD": {
+        "_weight": 15,
+        "WorldPremiseTone.What": 10,
+        "AestheticLanguage.Keywords": 10,
+        "_listField": "Locations",
+        "_perItem": {
+          "Name": 10,
+          "Setting": 10,
+          "ShortDescription": 15,
+          "Images.LeadImage": 25,
+          "Meta.Scale": 10,
+          "Meta.Context": 10,
+          "Meta.Function": 10
+        }
+      },
+      "LORE": {
+        "_weight": 15,
+        "LorePremise.Text": 20,
+        "HistoryTimeline.Text": 20,
+        "TechMagicPhysicsRules.Text": 15,
+        "PowerStructuresFactions.Text": 20,
+        "CultureEverydayLife.Text": 15,
+        "MythsLegends.Text": 10
+      },
+      "STYLE": {
+        "_weight": 15,
+        "VisualStyle.LeadImage": 10,
+        "VisualStyle.SupportingImages": 10,
+        "VisualStyle.StyleSummary": 15,
+        "VisualStyle.KeyCharacteristics": 10,
+        "VisualStyle.ExtractedPatterns": 10,
+        "ColorPalette.PaletteSummary": 15,
+        "ColorPalette.ExtractedPalette": 15,
+        "ColorPalette.ColorRules": 5,
+        "TextureMaterialLanguage.MaterialSummary": 5,
+        "Composition.DepthStacking": 5
+      },
+      "STORY": {
+        "_weight": 15,
+        "CanonTimelineTable.Beat": 30,
+        "ArcMap.Arc": 25,
+        "POVStructureRules.POVStrategy": 15,
+        "POVStructureRules.TimelinePattern": 10,
+        "CharacterArcsGridLeads.Row": 20
+      }
+    },
+    "L3": {
+      "CHARACTERS": {
+        "_weight": 30,
+        "_listField": "CharacterList",
+        "_perItem": {
+          "Gen.Trigger": 10,
+          "Gen.Tags": 15,
+          "Gen.NegativeTags": 10,
+          "IdentityRole.NameLabel": 5,
+          "IdentityRole.StoryFunctionTag": 5,
+          "Visual.AgeRange": 5,
+          "Visual.BodyType": 5,
+          "Visual.KeyFacialPhysicalTraits": 5,
+          "Visual.Hairstyle": 5,
+          "Visual.ClothingStyle": 5,
+          "Images.LeadImage": 10,
+          "Voice.BaselineVoice": 5,
+          "BehaviourRules.CoreMotivations": 5,
+          "BehaviourRules.AlwaysRules": 5,
+          "BehaviourRules.NeverRules": 5
+        }
+      },
+      "WORLD": {
+        "_weight": 20,
+        "_listField": "Locations",
+        "_perItem": {
+          "Meta.Scale": 10,
+          "Meta.Context": 10,
+          "Meta.EnvironmentArchetype": 10,
+          "Meta.Function": 10,
+          "Gen.Trigger": 15,
+          "Gen.Tags": 15,
+          "Gen.NegativeTags": 10,
+          "Images.LeadImage": 10,
+          "SummaryBox.Summary": 10
+        }
+      },
+      "LORE": {
+        "_weight": 20,
+        "Timeline.Timeline": 20,
+        "_listField": "Factions.Faction",
+        "_perItem": {
+          "SummaryBox.ProfileText": 15,
+          "IngredientChecklist.IdentityMyth": 15,
+          "IngredientChecklist.PowerMethods": 15,
+          "IngredientChecklist.PromisePrice": 15,
+          "IngredientChecklist.FractureLine": 10,
+          "Relationships.Link": 10
+        }
+      },
+      "STYLE": {
+        "_weight": 10,
+        "VisualIconography.IconographyOutline": 15,
+        "VisualIconography.MotifList": 10,
+        "VisualIconography.ShapeLanguage": 10,
+        "CameraAngle.DefaultShotLanguage": 15,
+        "CameraAngle.NamedAngles": 10,
+        "Lighting.BaseLightingMood": 15,
+        "Lighting.ContrastShadowRules": 10,
+        "Lighting.ColorTemperatureMap": 15
+      },
+      "STORY": {
+        "_weight": 20,
+        "OverallIPNarrative.Text": 10,
+        "MasterTimeline.Beat": 20,
+        "FormatNarrative.FormatType": 5,
+        "FormatNarrative.EpisodeCountOrLength": 5,
+        "FormatNarrative.StructureRules": 10,
+        "EpisodePack.Episode": 30,
+        "_perEpisode": {
+          "Title": 10,
+          "Logline": 15,
+          "BeatSheet": 20,
+          "KeyCharacters": 10,
+          "KeyLocations": 10,
+          "LoreDependencies": 10,
+          "AssetNeeds": 15,
+          "Notes": 10
+        }
+      }
+    }
+  },
+  
+  "calculationRules": {
+    "emptyValues": {
+      "string": ["", null],
+      "array": [[], null],
+      "object": [{}, null],
+      "asset": [null]
+    },
+    "listScoring": {
+      "method": "average",
+      "description": "For object[] fields, calculate average completeness across all items",
+      "minimumItems": {
+        "CharacterList": 1,
+        "Locations": 1,
+        "Factions.Faction": 0,
+        "CanonTimelineTable.Beat": 3,
+        "ArcMap.Arc": 1,
+        "MasterTimeline.Beat": 5,
+        "EpisodePack.Episode": 1
+      }
+    },
+    "bonusPoints": {
+      "description": "Extra points for exceeding minimums",
+      "excessItems": 2,
+      "maxBonus": 10
+    }
+  }
+}
