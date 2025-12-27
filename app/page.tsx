@@ -864,6 +864,14 @@ export default function Page() {
   const [settingsHistory, setSettingsHistory] = useState<SettingsHistory>({});
   const [showHistoryPanel, setShowHistoryPanel] = useState<boolean>(false);
 
+  // AI Helper state
+  type AiHelperMessage = { role: "user" | "assistant"; content: string };
+  const [aiHelperOpen, setAiHelperOpen] = useState<boolean>(false);
+  const [aiHelperMessages, setAiHelperMessages] = useState<AiHelperMessage[]>([]);
+  const [aiHelperInput, setAiHelperInput] = useState<string>("");
+  const [aiHelperLoading, setAiHelperLoading] = useState<boolean>(false);
+  const [aiHelperProvider, setAiHelperProvider] = useState<"gemini" | "openai">("gemini");
+
   const [rasterProgress, setRasterProgress] = useState({
     running: false,
     currentPage: 0,
@@ -983,6 +991,73 @@ export default function Page() {
       const updated = existing.filter((_, i) => i !== index);
       return { ...prev, [key]: updated };
     });
+  }
+
+  // AI Helper chat function
+  async function sendAiHelperMessage() {
+    if (!aiHelperInput.trim() || aiHelperLoading) return;
+
+    const userMessage: AiHelperMessage = { role: "user", content: aiHelperInput.trim() };
+    const newMessages = [...aiHelperMessages, userMessage];
+    setAiHelperMessages(newMessages);
+    setAiHelperInput("");
+    setAiHelperLoading(true);
+
+    try {
+      const res = await fetch("/api/projects/settings/ai-helper", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messages: newMessages,
+          settingsTab,
+          currentContent: getCurrentSettingsContent(settingsTab),
+          provider: aiHelperProvider
+        })
+      });
+
+      const data = (await res.json()) as { ok: boolean; response?: string; error?: string };
+
+      if (!res.ok || !data.ok) {
+        setAiHelperMessages([
+          ...newMessages,
+          { role: "assistant", content: `Error: ${data.error || "Failed to get response"}` }
+        ]);
+      } else {
+        setAiHelperMessages([...newMessages, { role: "assistant", content: data.response || "" }]);
+      }
+    } catch (err) {
+      setAiHelperMessages([
+        ...newMessages,
+        { role: "assistant", content: `Error: ${err instanceof Error ? err.message : String(err)}` }
+      ]);
+    } finally {
+      setAiHelperLoading(false);
+    }
+  }
+
+  // Apply AI suggestion to current settings
+  function applyAiSuggestion(content: string) {
+    // Extract JSON from markdown code blocks
+    const jsonMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
+    const extracted = jsonMatch ? jsonMatch[1].trim() : content.trim();
+
+    // Validate if it's valid JSON for JSON tabs
+    if (settingsTab !== "ai") {
+      try {
+        JSON.parse(extracted);
+      } catch {
+        // Not valid JSON, don't apply
+        return;
+      }
+    }
+
+    switch (settingsTab) {
+      case "ai": setAiRulesDraft(extracted); break;
+      case "tagging": setTaggingJsonDraft(extracted); break;
+      case "schema": setSchemaJsonDraft(extracted); break;
+      case "completeness": setCompletenessRulesDraft(extracted); break;
+      case "detection": setDetectionRulesJsonDraft(extracted); break;
+    }
   }
 
   async function loadManifest(url: string) {
@@ -2344,8 +2419,8 @@ export default function Page() {
               </button>
             </div>
 
-            {/* Version History Controls */}
-            <div style={{ display: "flex", gap: 8, marginTop: 10, alignItems: "center" }}>
+            {/* Version History Controls + AI Helper */}
+            <div style={{ display: "flex", gap: 8, marginTop: 10, alignItems: "center", flexWrap: "wrap" }}>
               <button
                 type="button"
                 onClick={() => saveVersionSnapshot()}
@@ -2375,6 +2450,22 @@ export default function Page() {
                 }}
               >
                 📜 History ({(settingsHistory[getHistoryKey(settingsTab)] ?? []).length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setAiHelperOpen((v) => !v)}
+                style={{
+                  border: "1px solid #6366f1",
+                  background: aiHelperOpen ? "#6366f1" : "#fff",
+                  color: aiHelperOpen ? "#fff" : "#6366f1",
+                  padding: "6px 10px",
+                  borderRadius: 8,
+                  fontSize: 12,
+                  cursor: "pointer",
+                  fontWeight: 600
+                }}
+              >
+                🤖 AI Helper
               </button>
             </div>
 
@@ -2452,6 +2543,275 @@ export default function Page() {
                     ))}
                   </div>
                 )}
+              </div>
+            )}
+
+            {/* AI Helper Floating Chat Window */}
+            {aiHelperOpen && (
+              <div style={{
+                position: "fixed",
+                bottom: 20,
+                right: 20,
+                width: 380,
+                maxHeight: 500,
+                border: "2px solid #6366f1",
+                borderRadius: 16,
+                background: "#fff",
+                boxShadow: "0 8px 32px rgba(99,102,241,0.3)",
+                display: "flex",
+                flexDirection: "column",
+                zIndex: 1000
+              }}>
+                {/* Header */}
+                <div style={{
+                  padding: "12px 16px",
+                  borderBottom: "1px solid #e5e7eb",
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  background: "#6366f1",
+                  borderRadius: "14px 14px 0 0"
+                }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ fontSize: 16 }}>🤖</span>
+                    <span style={{ fontWeight: 700, color: "#fff" }}>AI Helper</span>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <select
+                      value={aiHelperProvider}
+                      onChange={(e) => setAiHelperProvider(e.target.value as "gemini" | "openai")}
+                      style={{
+                        border: "1px solid rgba(255,255,255,0.3)",
+                        background: "rgba(255,255,255,0.2)",
+                        color: "#fff",
+                        padding: "4px 8px",
+                        borderRadius: 6,
+                        fontSize: 11,
+                        cursor: "pointer"
+                      }}
+                    >
+                      <option value="gemini" style={{ color: "#000" }}>Gemini</option>
+                      <option value="openai" style={{ color: "#000" }}>OpenAI</option>
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => setAiHelperOpen(false)}
+                      style={{
+                        border: "none",
+                        background: "rgba(255,255,255,0.2)",
+                        color: "#fff",
+                        width: 24,
+                        height: 24,
+                        borderRadius: 6,
+                        cursor: "pointer",
+                        fontSize: 14,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center"
+                      }}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                </div>
+
+                {/* Context Badge */}
+                <div style={{
+                  padding: "8px 16px",
+                  background: "#f3f4f6",
+                  borderBottom: "1px solid #e5e7eb",
+                  fontSize: 11,
+                  color: "#666"
+                }}>
+                  Context: <strong>{settingsTab.charAt(0).toUpperCase() + settingsTab.slice(1)}</strong> settings
+                </div>
+
+                {/* Messages */}
+                <div style={{
+                  flex: 1,
+                  overflowY: "auto",
+                  padding: 12,
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 10,
+                  minHeight: 200,
+                  maxHeight: 280
+                }}>
+                  {aiHelperMessages.length === 0 && (
+                    <div style={{ color: "#888", fontSize: 12, textAlign: "center", marginTop: 20 }}>
+                      Ask me anything about your {settingsTab} settings!<br />
+                      <span style={{ fontSize: 11 }}>I can help write JSON, explain fields, or suggest improvements.</span>
+                    </div>
+                  )}
+                  {aiHelperMessages.map((msg, i) => (
+                    <div key={i} style={{
+                      alignSelf: msg.role === "user" ? "flex-end" : "flex-start",
+                      maxWidth: "85%"
+                    }}>
+                      <div style={{
+                        background: msg.role === "user" ? "#6366f1" : "#f3f4f6",
+                        color: msg.role === "user" ? "#fff" : "#000",
+                        padding: "8px 12px",
+                        borderRadius: msg.role === "user" ? "12px 12px 4px 12px" : "12px 12px 12px 4px",
+                        fontSize: 13,
+                        whiteSpace: "pre-wrap",
+                        wordBreak: "break-word"
+                      }}>
+                        {msg.content}
+                      </div>
+                      {msg.role === "assistant" && msg.content.includes("```") && (
+                        <button
+                          type="button"
+                          onClick={() => applyAiSuggestion(msg.content)}
+                          style={{
+                            marginTop: 4,
+                            border: "1px solid #6366f1",
+                            background: "#fff",
+                            color: "#6366f1",
+                            padding: "4px 8px",
+                            borderRadius: 6,
+                            fontSize: 11,
+                            cursor: "pointer"
+                          }}
+                        >
+                          📋 Apply to Editor
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                  {aiHelperLoading && (
+                    <div style={{ color: "#888", fontSize: 12, fontStyle: "italic" }}>
+                      Thinking...
+                    </div>
+                  )}
+                </div>
+
+                {/* Input */}
+                <div style={{
+                  padding: 12,
+                  borderTop: "1px solid #e5e7eb",
+                  display: "flex",
+                  gap: 8
+                }}>
+                  <input
+                    type="text"
+                    value={aiHelperInput}
+                    onChange={(e) => setAiHelperInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault();
+                        sendAiHelperMessage();
+                      }
+                    }}
+                    placeholder="Ask about settings..."
+                    disabled={aiHelperLoading}
+                    style={{
+                      flex: 1,
+                      border: "1px solid #d1d5db",
+                      borderRadius: 8,
+                      padding: "8px 12px",
+                      fontSize: 13,
+                      outline: "none"
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => sendAiHelperMessage()}
+                    disabled={aiHelperLoading || !aiHelperInput.trim()}
+                    style={{
+                      border: "none",
+                      background: aiHelperLoading || !aiHelperInput.trim() ? "#d1d5db" : "#6366f1",
+                      color: "#fff",
+                      padding: "8px 14px",
+                      borderRadius: 8,
+                      fontSize: 13,
+                      cursor: aiHelperLoading || !aiHelperInput.trim() ? "not-allowed" : "pointer",
+                      fontWeight: 600
+                    }}
+                  >
+                    Send
+                  </button>
+                </div>
+
+                {/* Quick Actions */}
+                <div style={{
+                  padding: "8px 12px 12px",
+                  display: "flex",
+                  gap: 6,
+                  flexWrap: "wrap"
+                }}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAiHelperInput("Explain this configuration");
+                      setTimeout(() => sendAiHelperMessage(), 100);
+                    }}
+                    disabled={aiHelperLoading}
+                    style={{
+                      border: "1px solid #e5e7eb",
+                      background: "#f9fafb",
+                      padding: "4px 8px",
+                      borderRadius: 6,
+                      fontSize: 10,
+                      cursor: "pointer"
+                    }}
+                  >
+                    Explain config
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAiHelperInput("Suggest improvements");
+                      setTimeout(() => sendAiHelperMessage(), 100);
+                    }}
+                    disabled={aiHelperLoading}
+                    style={{
+                      border: "1px solid #e5e7eb",
+                      background: "#f9fafb",
+                      padding: "4px 8px",
+                      borderRadius: 6,
+                      fontSize: 10,
+                      cursor: "pointer"
+                    }}
+                  >
+                    Suggest improvements
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAiHelperInput("Fix JSON syntax errors");
+                      setTimeout(() => sendAiHelperMessage(), 100);
+                    }}
+                    disabled={aiHelperLoading}
+                    style={{
+                      border: "1px solid #e5e7eb",
+                      background: "#f9fafb",
+                      padding: "4px 8px",
+                      borderRadius: 6,
+                      fontSize: 10,
+                      cursor: "pointer"
+                    }}
+                  >
+                    Fix JSON errors
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAiHelperMessages([]);
+                    }}
+                    style={{
+                      border: "1px solid #fca5a5",
+                      background: "#fff",
+                      color: "#dc2626",
+                      padding: "4px 8px",
+                      borderRadius: 6,
+                      fontSize: 10,
+                      cursor: "pointer"
+                    }}
+                  >
+                    Clear chat
+                  </button>
+                </div>
               </div>
             )}
 
