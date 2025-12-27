@@ -1,0 +1,911 @@
+{
+  "schemaId": "otherly-ipbible",
+  "version": "0.2.0",
+  "levels": ["L1", "L2", "L3"],
+  "domains": ["OVERVIEW", "CHARACTERS", "WORLD", "LORE", "STYLE", "STORY"],
+
+  "inferencePolicy": {
+    "rule": "Fill fields using these sources in priority order: (1) Explicit source text, (2) Tagged asset descriptions, (3) Contextual inference from narrative, (4) World knowledge for real-world references. Only leave empty when no reasonable inference is possible.",
+    
+    "realWorldInference": {
+      "enabled": true,
+      "instructions": [
+        "For real-world locations (cities, countries, landmarks), populate Setting, Context, Scale using known geography and culture",
+        "For historical time periods, infer appropriate technology, fashion, architecture, social norms",
+        "For character names, infer likely gender, cultural background when patterns are clear",
+        "For mentioned institutions (universities, companies, governments), infer standard organizational structures"
+      ]
+    },
+    
+    "assetInference": {
+      "enabled": true,
+      "instructions": [
+        "Match character names mentioned in source to tagged assets showing that character",
+        "Use asset tags to populate Visual, Gen.Tags, and Images fields",
+        "Extract color palettes, textures, and style patterns from tagged image descriptions",
+        "Link location names to tagged environment/background assets"
+      ]
+    },
+    
+    "defaults": {
+      "string": "",
+      "string[]": [],
+      "object": {},
+      "object[]": [],
+      "asset": null,
+      "asset[]": []
+    }
+  },
+
+  "assetMatchingRules": {
+    "description": "Rules for automatically matching tagged assets to schema image fields based on tag confidence",
+    
+    "matchingProcess": [
+      "1. For each image field in the schema, identify the TARGET (character name, location name, style category, etc.)",
+      "2. Search tagged assets for tags that match or relate to the TARGET",
+      "3. Calculate a confidence score based on tag relevance",
+      "4. Select the asset with the highest confidence score above the threshold",
+      "5. If no asset meets the threshold, leave the field as null"
+    ],
+    
+    "confidenceThresholds": {
+      "LeadImage": 0.7,
+      "SupportingImages": 0.5,
+      "SecondaryImages": 0.4,
+      "StyleImages": 0.3
+    },
+    
+    "matchingCriteria": {
+      "characters": {
+        "highConfidence": ["Exact name match in tags", "Character labeled in asset description", "Face/portrait tag + name context"],
+        "mediumConfidence": ["Partial name match", "Role match (e.g., 'protagonist', 'villain')", "Physical description match"],
+        "lowConfidence": ["Gender match only", "Age range match", "Clothing style match without name"]
+      },
+      "locations": {
+        "highConfidence": ["Exact location name in tags", "Landmark/building match", "City/region labeled"],
+        "mediumConfidence": ["Environment type match (urban, rural, interior)", "Architecture style match", "Time period match"],
+        "lowConfidence": ["General mood/atmosphere match", "Color palette match", "Weather/lighting match"]
+      },
+      "style": {
+        "highConfidence": ["Visual style tags match (e.g., 'noir', 'vibrant', 'minimalist')", "Color palette mentioned", "Texture/material match"],
+        "mediumConfidence": ["Composition type match", "Lighting style match", "Art style reference"],
+        "lowConfidence": ["General aesthetic match", "Mood match"]
+      },
+      "factions": {
+        "highConfidence": ["Organization name in tags", "Symbol/logo shown", "Uniform/insignia visible"],
+        "mediumConfidence": ["Member appearance match", "Headquarters location match"],
+        "lowConfidence": ["Color scheme match", "General affiliation context"]
+      }
+    },
+    
+    "assetSelectionPriority": [
+      "Prefer assets with explicit name/label tags over inferred matches",
+      "Prefer higher resolution/quality images when confidence is equal",
+      "Prefer images showing the subject clearly (not cropped, not in background)",
+      "For LeadImage, prefer portraits/hero shots over action scenes",
+      "For SupportingImages, prefer variety (different poses, angles, contexts)",
+      "Avoid using the same asset for multiple unrelated fields"
+    ],
+    
+    "outputFormat": {
+      "description": "When populating an asset field, use this format:",
+      "LeadImageExample": {
+        "url": "https://blob.vercel-storage.com/extracted/page-005-img-001.png",
+        "source": "extracted",
+        "caption": "Portrait of Arthur Pendragon in royal attire",
+        "_matchConfidence": 0.85,
+        "_matchReason": "Character name 'Arthur' exact match in asset tags: ['Arthur Pendragon', 'king', 'portrait']"
+      },
+      "SupportingImagesExample": [
+        {
+          "url": "https://blob.vercel-storage.com/extracted/page-012-img-003.png",
+          "source": "extracted",
+          "caption": "Exterior view of Camelot Castle at dawn",
+          "_matchConfidence": 0.72,
+          "_matchReason": "Location 'Camelot' matched tags: ['castle', 'medieval', 'exterior', 'Camelot']"
+        }
+      ],
+      "noMatchBehavior": "If no asset meets the confidence threshold, set the field to null"
+    },
+    
+    "confidenceCalculation": {
+      "method": "Tag overlap scoring with weighted components",
+      "scoring": {
+        "exactNameMatch": "+0.50 (character/location name exactly in tags)",
+        "partialNameMatch": "+0.30 (first/last name or partial location)",
+        "categoryMatch": "+0.20 (portrait, landscape, action matches intent)",
+        "descriptorMatch": "+0.10 (style descriptors align with field context)",
+        "contextMatch": "+0.10 (scene context matches schema domain)"
+      },
+      "exampleCalculation": "Character 'Arthur' → asset tagged ['Arthur Pendragon', 'king', 'portrait', 'medieval'] → exactName(0.5) + category-portrait(0.2) + descriptor(0.1) = 0.80 confidence"
+    }
+  },
+
+  "aiInstructions": {
+    "general": [
+      "Cross-reference tagged assets with characters/locations by name matching",
+      "For real-world locations, supplement with known geographical and cultural facts",
+      "For historical time periods, infer appropriate technology, fashion, social norms",
+      "Extract visual details from asset tags to populate Visual and Gen fields",
+      "Prefer specific, concrete values over vague descriptions",
+      "When source mentions a place like 'London', fill in: Setting='England, United Kingdom', Scale='city', Context='[era-appropriate description]'"
+    ],
+    
+    "characterRules": [
+      "Match character names to tagged assets showing that character",
+      "Infer gender from name patterns unless explicitly ambiguous in source",
+      "Derive Visual fields (AgeRange, BodyType, Hairstyle, etc.) from tagged image descriptions",
+      "Build Gen.Tags by combining: source text descriptions + asset tags + inferred visual traits",
+      "For relationships, infer Type (family/friend/rival/romantic) from narrative context",
+      "StoryFunctionTags should reflect narrative role: 'mentor', 'love-interest', 'comic-relief', etc."
+    ],
+    
+    "locationRules": [
+      "For named real places (London, Tokyo, NYC, etc.), auto-populate Setting, Context, Scale, EnvironmentArchetype",
+      "Match location names to tagged environment/background assets",
+      "Infer time-period-appropriate architecture, technology, atmosphere",
+      "Function should describe narrative purpose: 'protagonist-home', 'conflict-zone', 'sanctuary', 'threshold'"
+    ],
+    
+    "styleRules": [
+      "Extract color, texture, composition patterns from ALL tagged assets",
+      "Build ExtractedPatterns arrays from recurring visual elements across assets",
+      "Infer lighting mood from asset descriptions (warm/cold, high-key/low-key, natural/artificial)",
+      "Derive camera patterns from composition descriptions in asset tags"
+    ],
+    
+    "loreRules": [
+      "For real historical periods, supplement with known historical facts",
+      "Infer power structures from character relationships and narrative conflicts",
+      "Build faction profiles from mentioned organizations, groups, or allegiances",
+      "Timeline should include both explicit events and reasonably inferred backstory"
+    ],
+    
+    "storyRules": [
+      "Infer narrative beats from character arcs and conflict progression",
+      "Build ArcMap from protagonist's emotional/situational changes",
+      "KeyTurns should be specific moments, not vague descriptions",
+      "POVStrategy should reflect the narrative voice evident in source text"
+    ]
+  },
+
+  "primitives": {
+    "types": {
+      "string": { "kind": "scalar" },
+      "string[]": { "kind": "array", "items": { "type": "string" } },
+      "object": { "kind": "object" },
+      "object[]": { "kind": "array", "items": { "type": "object" } },
+      "enum": { "kind": "enum" },
+      "ref": { "kind": "ref" },
+      "ref[]": { "kind": "array", "items": { "type": "ref" } },
+      "asset": { "kind": "asset" },
+      "asset[]": { "kind": "array", "items": { "type": "asset" } }
+    },
+
+    "assets": {
+      "image": {
+        "allowedFormats": ["png", "jpg", "jpeg", "webp"],
+        "fields": {
+          "url": { "type": "string", "format": "uri", "required": true },
+          "source": { "type": "enum", "values": ["uploaded", "extracted", "generated"], "required": true },
+          "caption": { "type": "string", "required": false }
+        }
+      },
+      "audio": {
+        "fields": {
+          "url": { "type": "string", "format": "uri", "required": true },
+          "source": { "type": "enum", "values": ["uploaded", "generated"], "required": true },
+          "caption": { "type": "string", "required": false }
+        }
+      }
+    },
+
+    "limits": {
+      "L1_COVER_PROMPT": { "maxWords": 35, "maxTokens": 80 },
+      "L2_TINY": { "maxWords": 8, "maxTokens": 24 },
+      "L2_SHORT": { "maxWords": 20, "maxTokens": 60 },
+      "L2_MED": { "maxWords": 45, "maxTokens": 120 },
+      "L2_LONG": { "maxWords": 90, "maxTokens": 220 },
+      "L3_SHORT": { "maxWords": 30, "maxTokens": 90 },
+      "L3_MED": { "maxWords": 80, "maxTokens": 200 },
+      "L3_LONG": { "maxWords": 140, "maxTokens": 320 }
+    },
+
+    "enums": {
+      "RoleType": ["lead", "antagonist", "supporting", "background_recurring"],
+      "FormatType": ["film", "series", "podcast", "webtoon", "novel", "game", "other"]
+    }
+  },
+
+  "schema": {
+    "L1": {
+      "OVERVIEW": {
+        "output": { "modality": "image", "count": 1 },
+        "fields": {
+          "KeyArtPoster": { "type": "asset", "assetType": "image", "required": false }
+        }
+      },
+      "CHARACTERS": {
+        "output": { "modality": "image", "count": 1 },
+        "fields": {
+          "KeyArtPoster": { "type": "asset", "assetType": "image", "required": false }
+        }
+      },
+      "WORLD": {
+        "output": { "modality": "image", "count": 1 },
+        "fields": {
+          "KeyArtPoster": { "type": "asset", "assetType": "image", "required": false }
+        }
+      },
+      "LORE": {
+        "output": { "modality": "image", "count": 1 },
+        "fields": {
+          "KeyArtPoster": { "type": "asset", "assetType": "image", "required": false }
+        }
+      },
+      "STYLE": {
+        "output": { "modality": "image", "count": 1 },
+        "fields": {
+          "KeyArtPoster": { "type": "asset", "assetType": "image", "required": false }
+        }
+      },
+      "STORY": {
+        "output": { "modality": "image", "count": 1 },
+        "fields": {
+          "KeyArtPoster": { "type": "asset", "assetType": "image", "required": false }
+        }
+      }
+    },
+
+    "L2": {
+      "OVERVIEW": {
+        "output": { "modality": "text" },
+        "fields": {
+          "IPTitle": { "type": "string", "required": false, "limits": { "use": "L2_TINY" }, "hint": "The main title of the IP" },
+          "Logline": { "type": "string", "required": false, "limits": { "use": "L2_MED" }, "hint": "One-sentence hook capturing protagonist, goal, obstacle, stakes" },
+          "NarrativeEngine": { "type": "string", "required": false, "limits": { "use": "L2_MED" }, "hint": "The core dramatic question or tension that drives the story forward" },
+          "Tone": { "type": "string", "required": false, "limits": { "use": "L2_SHORT" }, "hint": "Emotional register: dark, whimsical, gritty, hopeful, etc. Infer from narrative voice." },
+          "MainCharacter": { "type": "string", "required": false, "limits": { "use": "L2_LONG" }, "hint": "Protagonist summary including goal, flaw, and arc direction" },
+          "Antagonist": { "type": "string", "required": false, "limits": { "use": "L2_LONG" }, "hint": "Primary opposition force - can be person, institution, or internal conflict" },
+          "TheWorld": { "type": "string", "required": false, "limits": { "use": "L2_MED" }, "hint": "Setting summary. For real places, include known context." }
+        }
+      },
+
+      "CHARACTERS": {
+        "output": { "modality": "mixed" },
+        "hint": "Extract all named characters. Match to tagged assets by name. Infer gender, role from context.",
+        "structure": {
+          "CharacterList": {
+            "type": "object[]",
+            "itemName": "Character",
+            "required": false,
+            "hint": "Include ALL characters mentioned by name. Use tagged assets to populate Images.",
+            "fields": {
+              "RoleType": { "type": "enum", "enumRef": "RoleType", "required": false, "hint": "Infer from narrative importance and screen time" },
+              "Images": {
+                "type": "object",
+                "required": false,
+                "hint": "Match character name to tagged assets using assetMatchingRules. Use asset URLs if available.",
+                "fields": {
+                  "LeadImage": { "type": "asset", "assetType": "image", "required": false, "hint": "Select tagged asset with highest confidence for this character (threshold: 0.7). Prefer portraits/headshots. Include _matchConfidence and _matchReason." },
+                  "SupportingImages": { "type": "asset[]", "assetType": "image", "required": false, "limits": { "maxItems": 8 } }
+                }
+              },
+              "Name": { "type": "string", "required": false, "hint": "Full name as used in source" },
+              "Aliases": { "type": "string[]", "required": false, "limits": { "maxItems": 10 }, "hint": "Nicknames, titles, alternate names mentioned" },
+              "StoryFunctionTags": { "type": "string[]", "required": false, "limits": { "maxItems": 12 }, "hint": "Narrative roles: mentor, love-interest, rival, comic-relief, threshold-guardian, etc." },
+              "Headline": { "type": "string", "required": false, "limits": { "use": "L2_SHORT" }, "hint": "One-line character description capturing essence" }
+            }
+          }
+        }
+      },
+
+      "WORLD": {
+        "output": { "modality": "mixed" },
+        "hint": "Extract all named locations. For real-world places, populate with known geography/culture.",
+        "fields": {
+          "WorldPremiseTone": {
+            "type": "object",
+            "required": false,
+            "fields": { 
+              "What": { "type": "string", "required": false, "hint": "The world's defining characteristic or rule that makes it distinct" } 
+            }
+          },
+          "AestheticLanguage": {
+            "type": "object",
+            "required": false,
+            "fields": { 
+              "Keywords": { "type": "string[]", "required": false, "limits": { "maxItems": 20 }, "hint": "Visual/atmospheric keywords extracted from descriptions and asset tags" } 
+            }
+          }
+        },
+        "structure": {
+          "Locations": {
+            "type": "object[]",
+            "itemName": "Location",
+            "required": false,
+            "hint": "For real places (London, Paris, NYC), auto-fill Setting, Context, Scale from world knowledge",
+            "fields": {
+              "Images": {
+                "type": "object",
+                "required": false,
+                "hint": "Match location name to tagged environment/background assets using assetMatchingRules.",
+                "fields": {
+                  "LeadImage": { "type": "asset", "assetType": "image", "required": false, "hint": "Select tagged asset with highest confidence for this location (threshold: 0.7). Include _matchConfidence and _matchReason." },
+                  "SupportingImages": { "type": "asset[]", "assetType": "image", "required": false, "limits": { "maxItems": 8 } }
+                }
+              },
+              "Name": { "type": "string", "required": false, "hint": "Location name as mentioned in source" },
+              "Setting": { "type": "string", "required": false, "hint": "For real places, use known geography. E.g., 'London' → 'England, United Kingdom'" },
+              "Position": { "type": "string", "required": false, "hint": "Geographic or narrative position. For real places, use actual location context." },
+              "ShortDescription": { "type": "string", "required": false, "limits": { "use": "L2_MED" }, "hint": "Combine source description with inferred period-appropriate details" },
+              "Meta": {
+                "type": "object",
+                "required": false,
+                "hint": "Infer from location type and narrative context",
+                "fields": {
+                  "Scale": { "type": "string", "required": false, "hint": "city/neighborhood/building/room/landscape - infer from location type" },
+                  "Context": { "type": "string", "required": false, "hint": "Historical/cultural context. For real places + time periods, use world knowledge." },
+                  "EnvironmentArchetype": { "type": "string", "required": false, "hint": "urban-industrial/pastoral/dystopian/gothic/modern/etc. - infer from descriptions" },
+                  "Function": { "type": "string", "required": false, "hint": "Narrative purpose: protagonist-home/conflict-zone/sanctuary/threshold/etc." }
+                }
+              }
+            }
+          }
+        }
+      },
+
+      "LORE": {
+        "output": { "modality": "text" },
+        "hint": "For real historical periods, supplement with accurate historical context",
+        "fields": {
+          "LorePremise": { "type": "object", "required": false, "fields": { "Text": { "type": "string", "required": false, "limits": { "use": "L2_LONG" }, "hint": "The foundational 'what if' or world rule" } } },
+          "HistoryTimeline": { "type": "object", "required": false, "fields": { "Text": { "type": "string", "required": false, "limits": { "use": "L2_LONG" }, "hint": "Key historical events. For real periods, include relevant actual history." } } },
+          "TechMagicPhysicsRules": { "type": "object", "required": false, "fields": { "Text": { "type": "string", "required": false, "limits": { "use": "L2_LONG" }, "hint": "What's possible/impossible. For real periods, reflect actual technology." } } },
+          "PowerStructuresFactions": { "type": "object", "required": false, "fields": { "Text": { "type": "string", "required": false, "limits": { "use": "L2_LONG" }, "hint": "Who holds power and how. Infer from character relationships and conflicts." } } },
+          "CultureEverydayLife": { "type": "object", "required": false, "fields": { "Text": { "type": "string", "required": false, "limits": { "use": "L2_LONG" }, "hint": "Daily life details. For real periods/places, use accurate cultural context." } } },
+          "MythsLegends": { "type": "object", "required": false, "fields": { "Text": { "type": "string", "required": false, "limits": { "use": "L2_LONG" } } } }
+        }
+      },
+
+      "STYLE": {
+        "output": { "modality": "mixed" },
+        "hint": "Extract visual patterns from ALL tagged assets. Build comprehensive style guide.",
+        "fields": {
+          "VisualStyle": {
+            "type": "object",
+            "required": false,
+            "hint": "Derive from tagged asset descriptions. Select representative style images.",
+            "fields": {
+              "LeadImage": { "type": "asset", "assetType": "image", "required": false, "hint": "Most representative style image from assets. Threshold: 0.5. Include _matchConfidence." },
+              "SupportingImages": { "type": "asset[]", "assetType": "image", "required": false, "limits": { "maxItems": 12 }, "hint": "Select variety of assets showing consistent style. Threshold: 0.3." },
+              "StyleSummary": { "type": "string", "required": false, "limits": { "use": "L2_LONG" }, "hint": "Overall visual identity extracted from assets and descriptions" },
+              "KeyCharacteristics": { "type": "string[]", "required": false, "limits": { "maxItems": 12 }, "hint": "Dominant visual traits across all assets" },
+              "StyleElements": { "type": "string[]", "required": false, "limits": { "maxItems": 24 }, "hint": "Specific visual elements: line weight, shading style, detail level, etc." },
+              "ExtractedPatterns": { "type": "string[]", "required": false, "limits": { "maxItems": 30 }, "hint": "Recurring visual patterns found in tagged assets" }
+            }
+          },
+          "ColorPalette": {
+            "type": "object",
+            "required": false,
+            "hint": "Extract from tagged asset color descriptions",
+            "fields": {
+              "MainPaletteStrip": { "type": "asset", "assetType": "image", "required": false },
+              "AdditionalSwatches": { "type": "asset[]", "assetType": "image", "required": false, "limits": { "maxItems": 12 } },
+              "PaletteSummary": { "type": "string", "required": false, "limits": { "use": "L2_LONG" }, "hint": "Color mood and palette description from asset analysis" },
+              "ColorRules": { "type": "string[]", "required": false, "limits": { "maxItems": 12 }, "hint": "When to use which colors, associations" },
+              "UsageExamples": { "type": "string[]", "required": false, "limits": { "maxItems": 12 } },
+              "ExtractedPalette": { "type": "string[]", "required": false, "limits": { "maxItems": 24 }, "hint": "Color names/hex codes mentioned in asset tags" }
+            }
+          },
+          "TextureMaterialLanguage": {
+            "type": "object",
+            "required": false,
+            "fields": {
+              "MaterialTileBoard": { "type": "asset", "assetType": "image", "required": false },
+              "MaterialSummary": { "type": "string", "required": false, "limits": { "use": "L2_MED" }, "hint": "Dominant textures and materials from asset descriptions" },
+              "SurfaceRules": { "type": "string[]", "required": false, "limits": { "maxItems": 12 } }
+            }
+          },
+          "Composition": {
+            "type": "object",
+            "required": false,
+            "hint": "Infer framing and composition patterns from asset descriptions",
+            "fields": {
+              "FramingGrid": { "type": "asset", "assetType": "image", "required": false },
+              "DepthStacking": { "type": "string", "required": false, "limits": { "use": "L2_LONG" } },
+              "FocusSubjectHierarchy": { "type": "string", "required": false, "limits": { "use": "L2_LONG" } },
+              "RecurringShapesMotifs": { "type": "string[]", "required": false, "limits": { "maxItems": 18 }, "hint": "Shape language from asset visual patterns" },
+              "NegativeSpaceRules": { "type": "string[]", "required": false, "limits": { "maxItems": 12 } },
+              "ExtractedCompositionPatterns": { "type": "string[]", "required": false, "limits": { "maxItems": 24 } }
+            }
+          }
+        }
+      },
+
+      "STORY": {
+        "output": { "modality": "text" },
+        "hint": "Infer narrative structure from character arcs and plot progression",
+        "fields": {
+          "CanonTimelineTable": {
+            "type": "object",
+            "required": false,
+            "fields": {
+              "Beat": {
+                "type": "object[]",
+                "required": false,
+                "itemName": "Beat",
+                "hint": "Extract story beats from narrative. Include both explicit and implied events.",
+                "fields": {
+                  "TimeMarker": { "type": "string", "required": false, "hint": "When this happens in story time" },
+                  "EventTitle": { "type": "string", "required": false },
+                  "Summary": { "type": "string", "required": false },
+                  "KeyCharacters": { "type": "string[]", "required": false },
+                  "LoreLinks": { "type": "string[]", "required": false }
+                }
+              }
+            }
+          },
+          "ArcMap": {
+            "type": "object",
+            "required": false,
+            "fields": {
+              "Arc": {
+                "type": "object[]",
+                "required": false,
+                "itemName": "Arc",
+                "hint": "Character transformation arcs. Infer from emotional/situational changes.",
+                "fields": {
+                  "ArcName": { "type": "string", "required": false },
+                  "StartState": { "type": "string", "required": false, "hint": "Character's state at story start" },
+                  "ArcQuestionTension": { "type": "string", "required": false, "hint": "The dramatic question for this character" },
+                  "KeyTurns": { "type": "string[]", "required": false, "limits": { "maxItems": 3 }, "hint": "Specific turning point moments" },
+                  "EndState": { "type": "string", "required": false, "hint": "Character's state at story end" }
+                }
+              }
+            }
+          },
+          "POVStructureRules": {
+            "type": "object",
+            "required": false,
+            "hint": "Infer from narrative voice in source text",
+            "fields": {
+              "POVStrategy": { "type": "string", "required": false, "limits": { "use": "L2_MED" }, "hint": "First/third person, single/multiple POV, etc." },
+              "TimelinePattern": { "type": "string", "required": false, "limits": { "use": "L2_MED" }, "hint": "Linear/non-linear, flashbacks, time jumps" },
+              "AccessRules": { "type": "string", "required": false, "limits": { "use": "L2_MED" } },
+              "NarrativeDevices": { "type": "string[]", "required": false, "limits": { "maxItems": 8 } }
+            }
+          },
+          "CharacterArcsGridLeads": {
+            "type": "object",
+            "required": false,
+            "fields": {
+              "Row": {
+                "type": "object[]",
+                "required": false,
+                "itemName": "Row",
+                "fields": {
+                  "Character": { "type": "string", "required": false },
+                  "StartState": { "type": "string", "required": false },
+                  "MidpointShift": { "type": "string", "required": false },
+                  "EndState": { "type": "string", "required": false },
+                  "CoreLessonFailure": { "type": "string", "required": false }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "L3": {
+      "CHARACTERS": {
+        "output": { "modality": "mixed" },
+        "hint": "Deep character profiles. Derive Visual from tagged assets. Build Gen.Tags for image generation.",
+        "structure": {
+          "CharacterList": {
+            "type": "object[]",
+            "itemName": "Character",
+            "required": false,
+            "fields": {
+              "RoleType": { "type": "enum", "enumRef": "RoleType", "required": false },
+
+              "Gen": {
+                "type": "object",
+                "required": false,
+                "hint": "AI generation tags. Combine source descriptions + tagged asset tags + inferred traits.",
+                "fields": {
+                  "Trigger": { "type": "string", "required": false, "hint": "Unique identifier for this character in prompts" },
+                  "Tags": { "type": "string[]", "required": false, "limits": { "maxItems": 50 }, "hint": "Comma-separated, specific, generation-friendly. Combine: explicit descriptors + asset tags + inferred visual traits." },
+                  "NegativeTags": { "type": "string[]", "required": false, "limits": { "maxItems": 50 }, "hint": "Things to avoid. Derive from character rules or explicit 'never' statements." },
+                  "Notes": { "type": "string", "required": false, "limits": { "use": "L3_MED" } }
+                }
+              },
+
+              "IdentityRole": {
+                "type": "object",
+                "required": false,
+                "fields": {
+                  "NameLabel": { "type": "string", "required": false },
+                  "AliasesNicknames": { "type": "string[]", "required": false, "limits": { "maxItems": 12 } },
+                  "StoryFunctionTag": { "type": "string", "required": false, "hint": "Primary narrative function: protagonist, mentor, love-interest, etc." },
+                  "Status": { "type": "string", "required": false, "hint": "Alive, deceased, unknown, etc." }
+                }
+              },
+
+              "HeadlineBox": {
+                "type": "object",
+                "required": false,
+                "fields": {
+                  "Headline": { "type": "string", "required": false, "limits": { "use": "L2_SHORT" } }
+                }
+              },
+
+              "SummaryBox": {
+                "type": "object",
+                "required": false,
+                "fields": {
+                  "ProfileText": { "type": "string", "required": false, "limits": { "use": "L3_LONG" } }
+                }
+              },
+
+              "Visual": {
+                "type": "object",
+                "required": false,
+                "hint": "Derive from tagged assets showing this character + source descriptions",
+                "fields": {
+                  "AgeRange": { "type": "string", "required": false, "hint": "Infer from context if not stated" },
+                  "BodyType": { "type": "string", "required": false, "hint": "Extract from asset tags or descriptions" },
+                  "KeyFacialPhysicalTraits": { "type": "string[]", "required": false, "limits": { "maxItems": 16 }, "hint": "Distinctive features from assets and text" },
+                  "Hairstyle": { "type": "string", "required": false, "hint": "From asset tags or descriptions" },
+                  "ClothingStyle": { "type": "string", "required": false, "hint": "Period/character appropriate. Infer from era if not stated." },
+                  "KeyPropsSilhouetteHook": { "type": "string", "required": false, "hint": "Distinctive items or visual hooks" }
+                }
+              },
+
+              "Images": {
+                "type": "object",
+                "required": false,
+                "hint": "Match character to tagged assets by name using assetMatchingRules. Select highest confidence matches.",
+                "fields": {
+                  "LeadImage": { "type": "asset", "assetType": "image", "required": false, "hint": "Best portrait/reference for this character. Threshold: 0.7. Include _matchConfidence." },
+                  "SecondaryImages": { "type": "asset[]", "assetType": "image", "required": false, "limits": { "maxItems": 12 } },
+                  "PoseSheet": { "type": "asset", "assetType": "image", "required": false },
+                  "ClothesImgs": { "type": "asset[]", "assetType": "image", "required": false, "limits": { "maxItems": 12 } },
+                  "PropImgs": { "type": "asset[]", "assetType": "image", "required": false, "limits": { "maxItems": 12 } },
+                  "DetailImgs": { "type": "asset[]", "assetType": "image", "required": false, "limits": { "maxItems": 20 } }
+                }
+              },
+
+              "Voice": {
+                "type": "object",
+                "required": false,
+                "hint": "Infer from dialogue patterns in source text",
+                "fields": {
+                  "BaselineVoice": { "type": "string", "required": false, "hint": "Overall vocal quality. Infer from dialogue style." },
+                  "SyntaxTempo": { "type": "string", "required": false, "hint": "Speech patterns: terse, verbose, formal, casual, etc." },
+                  "Register": { "type": "string", "required": false, "hint": "Formal/informal, educated/colloquial" },
+                  "SlangDialect": { "type": "string", "required": false, "hint": "Regional or period-specific speech patterns" },
+                  "SignaturePhrasesVerbalTics": { "type": "string[]", "required": false, "limits": { "maxItems": 10 }, "hint": "Catchphrases, verbal habits from dialogue" },
+                  "AudioSample": { "type": "asset", "assetType": "audio", "required": false }
+                }
+              },
+
+              "BehaviourRules": {
+                "type": "object",
+                "required": false,
+                "hint": "Infer from character actions and decisions in narrative",
+                "fields": {
+                  "CoreMotivations": { "type": "string[]", "required": false, "limits": { "maxItems": 8 }, "hint": "What drives this character. Infer from goals and choices." },
+                  "CoreFearsVulnerabilities": { "type": "string[]", "required": false, "limits": { "maxItems": 8 }, "hint": "Weaknesses shown in narrative" },
+                  "AlwaysRules": { "type": "string[]", "required": false, "limits": { "maxItems": 12 }, "hint": "Consistent behaviors. 'This character always...'" },
+                  "NeverRules": { "type": "string[]", "required": false, "limits": { "maxItems": 12 }, "hint": "Lines they won't cross. 'This character never...'" },
+                  "PrimaryFlaws": { "type": "string[]", "required": false, "limits": { "maxItems": 8 }, "hint": "Character defects that create conflict" },
+                  "DecisionPatterns": { "type": "string", "required": false, "limits": { "use": "L3_MED" }, "hint": "How they make choices under pressure" }
+                }
+              },
+
+              "Relationships": {
+                "type": "object",
+                "required": false,
+                "hint": "Infer relationship types from narrative interactions",
+                "fields": {
+                  "Link": {
+                    "type": "object[]",
+                    "required": false,
+                    "itemName": "Link",
+                    "hint": "All significant character connections. Infer Type from context.",
+                    "fields": {
+                      "TargetRef": { "type": "string", "required": false, "hint": "Name of related character" },
+                      "Type": { "type": "string", "required": false, "hint": "family/friend/rival/romantic/professional/etc. Infer from interactions." },
+                      "Directionality": { "type": "string", "required": false, "hint": "mutual/one-way, who drives the dynamic" },
+                      "TensionLevel": { "type": "string", "required": false, "hint": "low/medium/high/volatile" },
+                      "KeyTurningPoints": { "type": "string[]", "required": false, "limits": { "maxItems": 6 }, "hint": "Moments that changed the relationship" },
+                      "Notes": { "type": "string", "required": false, "limits": { "use": "L3_MED" } }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+
+      "WORLD": {
+        "output": { "modality": "mixed" },
+        "hint": "Deep location profiles. For real places, use known geography/history/culture.",
+        "structure": {
+          "Locations": {
+            "type": "object[]",
+            "itemName": "Location",
+            "required": false,
+            "hint": "For real-world locations, auto-populate with accurate geographical and cultural information",
+            "fields": {
+              "Meta": {
+                "type": "object",
+                "required": false,
+                "hint": "For real places, use world knowledge to fill Context and EnvironmentArchetype",
+                "fields": {
+                  "Scale": { "type": "string", "required": false, "hint": "continent/country/region/city/neighborhood/building/room" },
+                  "Context": { "type": "string", "required": false, "hint": "Historical and cultural context. For real places, use accurate information for the time period." },
+                  "EnvironmentArchetype": { "type": "string", "required": false, "hint": "urban-victorian/industrial/pastoral/modern-metropolis/etc." },
+                  "Function": { "type": "string", "required": false, "hint": "Narrative purpose in the story" }
+                }
+              },
+
+              "Gen": {
+                "type": "object",
+                "required": false,
+                "hint": "Generation tags. Combine source + asset tags + period-appropriate details.",
+                "fields": {
+                  "Trigger": { "type": "string", "required": false },
+                  "Tags": { "type": "string[]", "required": false, "limits": { "maxItems": 50 }, "hint": "Include period-appropriate architecture, atmosphere, details" },
+                  "NegativeTags": { "type": "string[]", "required": false, "limits": { "maxItems": 50 }, "hint": "Anachronistic elements to avoid" },
+                  "Notes": { "type": "string", "required": false, "limits": { "use": "L3_MED" } }
+                }
+              },
+
+              "Images": {
+                "type": "object",
+                "required": false,
+                "fields": {
+                  "LeadImage": { "type": "asset", "assetType": "image", "required": false },
+                  "Map": { "type": "asset", "assetType": "image", "required": false },
+                  "SecondaryImages": { "type": "asset[]", "assetType": "image", "required": false, "limits": { "maxItems": 12 } }
+                }
+              },
+
+              "Name": {
+                "type": "object",
+                "required": false,
+                "fields": { "NameLabel": { "type": "string", "required": false } }
+              },
+
+              "SummaryBox": {
+                "type": "object",
+                "required": false,
+                "fields": { 
+                  "Summary": { "type": "string", "required": false, "limits": { "use": "L3_LONG" }, "hint": "Combine source description with period-appropriate world knowledge" } 
+                }
+              },
+
+              "Relationships": {
+                "type": "object",
+                "required": false,
+                "fields": {
+                  "Link": {
+                    "type": "object[]",
+                    "required": false,
+                    "itemName": "Link",
+                    "fields": {
+                      "TargetRef": { "type": "string", "required": false },
+                      "Type": { "type": "string", "required": false, "hint": "contains/adjacent-to/connected-by/contrasts-with/etc." },
+                      "Directionality": { "type": "string", "required": false },
+                      "TensionLevel": { "type": "string", "required": false },
+                      "Notes": { "type": "string", "required": false, "limits": { "use": "L3_MED" } }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+
+      "LORE": {
+        "output": { "modality": "mixed" },
+        "hint": "For real historical settings, supplement with accurate historical facts",
+        "fields": {
+          "Timeline": {
+            "type": "object",
+            "required": false,
+            "fields": {
+              "Timeline": { "type": "string", "required": false, "limits": { "use": "L3_LONG" }, "hint": "Include relevant real historical events for the period" }
+            }
+          }
+        },
+        "structure": {
+          "Factions": {
+            "type": "object",
+            "required": false,
+            "hint": "Extract organizations, groups, allegiances from narrative",
+            "fields": {
+              "Faction": {
+                "type": "object[]",
+                "required": false,
+                "itemName": "Faction",
+                "fields": {
+                  "SummaryBox": {
+                    "type": "object",
+                    "required": false,
+                    "fields": {
+                      "ProfileText": { "type": "string", "required": false, "limits": { "use": "L3_LONG" } }
+                    }
+                  },
+                  "Images": {
+                    "type": "object",
+                    "required": false,
+                    "fields": {
+                      "Symbol": { "type": "asset", "assetType": "image", "required": false },
+                      "Headquarters": { "type": "asset", "assetType": "image", "required": false },
+                      "SecondaryImages": { "type": "asset[]", "assetType": "image", "required": false, "limits": { "maxItems": 12 } },
+                      "TypeImages": { "type": "asset[]", "assetType": "image", "required": false, "limits": { "maxItems": 12 } },
+                      "PropImages": { "type": "asset[]", "assetType": "image", "required": false, "limits": { "maxItems": 12 } }
+                    }
+                  },
+                  "IngredientChecklist": {
+                    "type": "object",
+                    "required": false,
+                    "hint": "Core faction identity elements",
+                    "fields": {
+                      "IdentityMyth": { "type": "string", "required": false, "hint": "What story does this faction tell about itself?" },
+                      "PowerMethods": { "type": "string", "required": false, "hint": "How does this faction exert influence?" },
+                      "PromisePrice": { "type": "string", "required": false, "hint": "What does membership offer? What does it cost?" },
+                      "FractureLine": { "type": "string", "required": false, "hint": "Internal tensions that could split the faction" }
+                    }
+                  },
+                  "Relationships": {
+                    "type": "object",
+                    "required": false,
+                    "fields": {
+                      "Link": {
+                        "type": "object[]",
+                        "required": false,
+                        "itemName": "Link",
+                        "fields": {
+                          "TargetRef": { "type": "string", "required": false },
+                          "Type": { "type": "string", "required": false, "hint": "ally/rival/enemy/controls/serves/etc." },
+                          "Directionality": { "type": "string", "required": false },
+                          "TensionLevel": { "type": "string", "required": false },
+                          "KeyTurningPoints": { "type": "string[]", "required": false, "limits": { "maxItems": 6 } },
+                          "Notes": { "type": "string", "required": false, "limits": { "use": "L3_MED" } }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+
+      "STYLE": {
+        "output": { "modality": "text" },
+        "hint": "Deep style analysis. Extract patterns from all tagged assets.",
+        "fields": {
+          "VisualIconography": {
+            "type": "object",
+            "required": false,
+            "hint": "Recurring symbols and motifs from assets",
+            "fields": {
+              "IconographyOutline": { "type": "string", "required": false, "limits": { "use": "L3_MED" } },
+              "AdditionalMotifs": { "type": "string[]", "required": false, "limits": { "maxItems": 24 } },
+              "IconSummary": { "type": "string", "required": false, "limits": { "use": "L3_MED" } },
+              "MotifList": { "type": "string[]", "required": false, "limits": { "maxItems": 30 } },
+              "MetaSymbolsMeaning": { "type": "string[]", "required": false, "limits": { "maxItems": 24 }, "hint": "What symbols mean in this world" },
+              "ShapeLanguage": { "type": "string", "required": false, "limits": { "use": "L3_MED" } },
+              "ExtractedMotifs": { "type": "string[]", "required": false, "limits": { "maxItems": 40 } }
+            }
+          },
+          "CameraAngle": {
+            "type": "object",
+            "required": false,
+            "hint": "Infer from composition descriptions in asset tags",
+            "fields": {
+              "DefaultShotLanguage": { "type": "string", "required": false, "limits": { "use": "L3_MED" } },
+              "NamedAngles": { "type": "string[]", "required": false, "limits": { "maxItems": 24 } },
+              "MovementTendencies": { "type": "string[]", "required": false, "limits": { "maxItems": 12 } },
+              "CharacterPOVRules": { "type": "string[]", "required": false, "limits": { "maxItems": 12 } },
+              "ExtractedCameraPatterns": { "type": "string[]", "required": false, "limits": { "maxItems": 24 } }
+            }
+          },
+          "Lighting": {
+            "type": "object",
+            "required": false,
+            "hint": "Extract lighting patterns from asset descriptions",
+            "fields": {
+              "BaseLightingMood": { "type": "string", "required": false, "limits": { "use": "L3_MED" } },
+              "ContrastShadowRules": { "type": "string[]", "required": false, "limits": { "maxItems": 12 } },
+              "LightSourceLogic": { "type": "string", "required": false, "limits": { "use": "L3_MED" } },
+              "ColorTemperatureMap": { "type": "string", "required": false, "limits": { "use": "L3_MED" } },
+              "TimeOfDayBias": { "type": "string", "required": false },
+              "AccentLightingPatterns": { "type": "string[]", "required": false, "limits": { "maxItems": 12 } },
+              "ExtractedLightingPatterns": { "type": "string[]", "required": false, "limits": { "maxItems": 24 } }
+            }
+          }
+        }
+      },
+
+      "STORY": {
+        "output": { "modality": "text" },
+        "hint": "Detailed narrative breakdown",
+        "fields": {
+          "OverallIPNarrative": {
+            "type": "object",
+            "required": false,
+            "fields": {
+              "Text": { "type": "string", "required": false, "limits": { "use": "L3_LONG" } }
+            }
+          },
+          "MasterTimeline": {
+            "type": "object",
+            "required": false,
+            "fields": {
+              "Beat": {
+                "type": "object[]",
+                "required": false,
+                "itemName": "Beat",
+                "limits": { "minItems": 0, "maxItems": 60 },
+                "hint": "Comprehensive story beats including backstory",
+                "fields": {
+                  "TimeMarker": { "type": "string", "required": false },
+                  "EventTitle": { "type": "string", "required": false },
+                  "Summary": { "type": "string", "required": false, "limits": { "use": "L3_SHORT" } },
+                  "KeyCharacters": { "type": "string[]", "required": false },
+                  "Locations": { "type": "string[]", "required": false },
+                  "Factions": { "type": "string[]", "required": false },
+                  "Dependencies": { "type": "string[]", "required": false, "hint": "What must happen before this beat" }
+                }
+              }
+            }
+          },
+          "FormatNarrative": {
+            "type": "object",
+            "required": false,
+            "fields": {
+              "FormatType": { "type": "enum", "enumRef": "FormatType", "required": false },
+              "EpisodeCountOrLength": { "type": "string", "required": false },
+              "RuntimeOrPageCount": { "type": "string", "required": false },
+              "ReleaseCadence": { "type": "string", "required": false },
+              "StructureRules": { "type": "string", "required": false, "limits": { "use": "L3_MED" } }
+            }
+          },
+          "EpisodePack": {
+            "type": "object",
+            "required": false,
+            "fields": {
+              "Episode": {
+                "type": "object[]",
+                "required": false,
+                "itemName": "Episode",
+                "fields": {
+                  "EpisodeId": { "type": "string", "required": false },
+                  "EpisodeNumber": { "type": "string", "required": false },
+                  "Title": { "type": "string", "required": false },
+                  "Logline": { "type": "string", "required": false, "limits": { "use": "L2_MED" } },
+                  "BeatSheet": { "type": "string", "required": false },
+                  "KeyCharacters": { "type": "string[]", "required": false },
+                  "KeyLocations": { "type": "string[]", "required": false },
+                  "LoreDependencies": { "type": "string[]", "required": false },
+                  "AssetNeeds": { "type": "string[]", "required": false },
+                  "Notes": { "type": "string", "required": false, "limits": { "use": "L3_MED" } }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

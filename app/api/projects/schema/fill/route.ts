@@ -64,20 +64,35 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, error: "No extracted or formatted text available. Please process the PDF first." }, { status: 400 });
     }
 
-    // Get asset tags for additional context
-    const assetTags: string[] = [];
+    // Get assets with their URLs and tags for matching
+    interface TaggedAsset {
+      url: string;
+      assetId: string;
+      page: number;
+      tags: string[];
+    }
+    const taggedAssets: TaggedAsset[] = [];
+    
     if (manifest.pages) {
       for (const page of manifest.pages) {
         if (page.assets) {
           for (const asset of page.assets) {
-            if (asset.tags) {
-              assetTags.push(...asset.tags);
+            if (asset.url && asset.tags && asset.tags.length > 0) {
+              taggedAssets.push({
+                url: asset.url,
+                assetId: asset.assetId,
+                page: page.pageNumber,
+                tags: asset.tags
+              });
             }
           }
         }
       }
     }
-    const uniqueTags = [...new Set(assetTags)].sort();
+    
+    // Get unique tags for context
+    const allTags = taggedAssets.flatMap(a => a.tags);
+    const uniqueTags = [...new Set(allTags)].sort();
 
     // Build the prompt for Gemini
     const prompt = `You are an expert IP Bible creator. Your task is to fill in a structured schema based on the source material provided.
@@ -91,10 +106,31 @@ ${JSON.stringify(schemaDefinition, null, 2)}
 ## SOURCE MATERIAL:
 ${sourceText}
 
-## VISUAL ASSET TAGS (for context about images/artwork):
-${uniqueTags.length > 0 ? uniqueTags.join(", ") : "No tagged assets yet."}
+## TAGGED ASSETS (images with their URLs and tags - USE THESE FOR IMAGE FIELDS):
+${taggedAssets.length > 0 ? JSON.stringify(taggedAssets, null, 2) : "No tagged assets available."}
 
-## INSTRUCTIONS:
+## UNIQUE TAGS FOUND:
+${uniqueTags.length > 0 ? uniqueTags.join(", ") : "None"}
+
+## ASSET MATCHING INSTRUCTIONS:
+When populating image/asset fields in the schema, you MUST match tagged assets to the appropriate fields:
+
+1. **For Character Images**: Search tagged assets for the character's name in the tags array. Match by:
+   - Exact name match (highest confidence: 0.8+)
+   - Partial name match (medium: 0.5-0.8)
+   - Role match like "protagonist", "villain" (lower: 0.3-0.5)
+
+2. **For Location Images**: Search for location name or environment type in tags.
+
+3. **For Style Images**: Use assets with style-related tags (colors, art style, composition).
+
+4. **Output Format for image fields**:
+   - If a matching asset is found, return: { "url": "[actual asset URL]", "source": "extracted", "caption": "[brief description]", "_matchConfidence": 0.X, "_matchReason": "[why this asset matches]" }
+   - If no asset matches with confidence >= 0.3, return: null
+
+5. **CRITICAL**: Use the ACTUAL URLs from the tagged assets list above. Do NOT invent URLs.
+
+## GENERAL INSTRUCTIONS:
 1. Analyze the source material carefully
 2. Fill the schema according to 3 levels:
    - L1: High-level overview (mostly images/key art references)
@@ -103,7 +139,7 @@ ${uniqueTags.length > 0 ? uniqueTags.join(", ") : "No tagged assets yet."}
 3. For each domain (OVERVIEW, CHARACTERS, WORLD, LORE, STYLE, STORY), provide appropriate content
 4. Be comprehensive but accurate - do NOT invent details not in the source material
 5. Use "Unknown" for missing string fields, [] for missing arrays
-6. For asset fields (images), use null if no matching asset is available
+6. For real-world locations (cities, countries), infer Setting, Context, Scale from world knowledge
 
 ## OUTPUT FORMAT:
 Return ONLY valid JSON with this exact structure:
