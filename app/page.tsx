@@ -1346,7 +1346,18 @@ export default function Page() {
     setLastError("");
     setBusy("Uploading SOURCE...");
 
-    // Clear all existing data since we're starting fresh with a new source
+    // Preserve current settings before creating new project
+    const savedSettings = {
+      aiRules: aiRulesDraft,
+      taggingJson: taggingJsonDraft,
+      schemaJson: schemaJsonDraft,
+      completenessRules: completenessRulesDraft,
+      detectionRulesJson: detectionRulesJsonDraft,
+      history: settingsHistory
+    };
+
+    // Clear data fields since we're starting fresh with a new source
+    // (but keep settings - they'll be restored after loadManifest)
     setSchemaResults("");
     setSchemaResultsDraft("");
     setFormattedText("");
@@ -1383,6 +1394,15 @@ export default function Page() {
       setUrlParams(p.projectId, j.manifestUrl);
 
       await loadManifest(j.manifestUrl);
+
+      // Restore settings from previous project (loadManifest clears them for new projects)
+      setAiRulesDraft(savedSettings.aiRules);
+      setTaggingJsonDraft(savedSettings.taggingJson);
+      setSchemaJsonDraft(savedSettings.schemaJson);
+      setCompletenessRulesDraft(savedSettings.completenessRules);
+      setDetectionRulesJsonDraft(savedSettings.detectionRulesJson);
+      setSettingsHistory(savedSettings.history);
+
       await refreshProjects();
     } finally {
       setBusy("");
