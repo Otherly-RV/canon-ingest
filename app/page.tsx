@@ -1785,6 +1785,8 @@ export default function Page() {
         tagged?: number;
         failed?: number;
         errors?: Array<{ pageNumber: number; assetId: string; error: string }>;
+        timedOut?: boolean;
+        message?: string;
       };
 
       if (!r.ok || !j.ok || !j.manifestUrl) throw new Error(j.error || `Tagging failed (${r.status})`);
@@ -1796,6 +1798,9 @@ export default function Page() {
           const firstErr = j.errors[0];
           log(`First error: ${firstErr.assetId} - ${firstErr.error}`);
         }
+      }
+      if (j.timedOut) {
+        logMsg += ` - PARTIAL (time limit reached, run again to continue)`;
       }
       log(logMsg);
       setTaggingProgress((s) => ({ ...s, tagged: j.tagged ?? 0 }));

@@ -312,6 +312,184 @@ async function callGeminiTagger(args: {
   throw lastErr ?? new Error("Gemini tagger failed");
 }
 
+// Batch asset info for batch tagging
+type BatchAsset = {
+  pageNumber: number;
+  assetId: string;
+  assetUrl: string;
+  pageText: string;
+};
+
+type BatchResult = {
+  assetId: string;
+  tags: string[];
+  rationale: string;
+};
+
+function buildBatchPrompt(args: {
+  aiRules: string;
+  taggingJson: string;
+  assets: Array<{ assetId: string; pageNumber: number }>;
+  maxTags: number;
+}) {
+  const { aiRules, taggingJson, assets, maxTags } = args;
+
+  const assetList = assets.map((a, i) => `  Image ${i + 1}: assetId="${a.assetId}" (page ${a.pageNumber})`).join("\n");
+
+  return [
+    `SYSTEM RULES (follow strictly):`,
+    aiRules,
+    ``,
+    `TAGGING CONFIG (JSON, use as constraints):`,
+    taggingJson,
+    ``,
+    `TASK: You are tagging MULTIPLE cropped image assets extracted from a PDF.`,
+    `Analyze each IMAGE provided to understand what it shows visually.`,
+    `You must output ONLY valid JSON (no markdown).`,
+    ``,
+    `IMAGES TO TAG:`,
+    assetList,
+    ``,
+    `OUTPUT SCHEMA (JSON array):`,
+    `[`,
+    `  { "assetId": "...", "tags": ["..."], "rationale": "..." },`,
+    `  ...`,
+    `]`,
+    ``,
+    `RULES:`,
+    `- Output one object per image in the same order as provided`,
+    `- tags must be short, lowercase preferred, comma-free strings`,
+    `- max ${maxTags} tags per image`,
+    `- if uncertain, output fewer tags (not guesses)`,
+    `- rationale should mention what you see in the image`
+  ].join("\n");
+}
+
+async function callGeminiBatchTagger(args: {
+  apiKey: string;
+  modelName: string;
+  aiRules: string;
+  taggingJson: string;
+  assets: BatchAsset[];
+}): Promise<BatchResult[]> {
+  const { apiKey, modelName, aiRules, taggingJson, assets } = args;
+
+  if (assets.length === 0) return [];
+
+  const genAI = new GoogleGenerativeAI(apiKey);
+  const model = genAI.getGenerativeModel({ model: modelName });
+
+  // Read max_tags_per_image from taggingJson if present
+  let maxTags = 20;
+  try {
+    const cfg = JSON.parse(taggingJson) as unknown;
+    if (cfg && typeof cfg === "object") {
+      const mt = (cfg as Record<string, unknown>)["max_tags_per_image"];
+      if (typeof mt === "number" && Number.isFinite(mt) && mt > 0) maxTags = clampInt(mt, 1, 50);
+    }
+  } catch {
+    // ignore
+  }
+
+  // Fetch all images in parallel
+  const imagePromises = assets.map(async (a) => {
+    try {
+      const { base64, mimeType } = await fetchImageAsBase64(a.assetUrl);
+      return { assetId: a.assetId, base64, mimeType, error: null };
+    } catch (e) {
+      return { assetId: a.assetId, base64: null, mimeType: null, error: e instanceof Error ? e.message : String(e) };
+    }
+  });
+  const imageResults = await Promise.all(imagePromises);
+
+  // Filter out failed fetches
+  const validImages = imageResults.filter((r) => r.base64 !== null);
+  if (validImages.length === 0) {
+    // All failed - return empty results
+    return assets.map((a) => ({
+      assetId: a.assetId,
+      tags: [],
+      rationale: "failed to fetch image"
+    }));
+  }
+
+  const prompt = buildBatchPrompt({
+    aiRules,
+    taggingJson,
+    assets: validImages.map((v) => {
+      const orig = assets.find((a) => a.assetId === v.assetId)!;
+      return { assetId: v.assetId, pageNumber: orig.pageNumber };
+    }),
+    maxTags
+  });
+
+  // Build parts: prompt text + all images
+  const parts: Array<{ text: string } | { inlineData: { mimeType: string; data: string } }> = [
+    { text: prompt }
+  ];
+  for (const img of validImages) {
+    parts.push({ inlineData: { mimeType: img.mimeType!, data: img.base64! } });
+  }
+
+  try {
+    const res = await model.generateContent({
+      contents: [{ role: "user", parts }],
+      generationConfig: {
+        temperature: 0.2,
+        topP: 0.9,
+        maxOutputTokens: 4000
+      }
+    });
+
+    let text = "";
+    try {
+      text = res.response.text?.() ?? "";
+    } catch {
+      text = "";
+    }
+
+    const parsed = safeParseJsonFromText(text);
+    if (!parsed || !Array.isArray(parsed)) {
+      // Fallback: return empty for all
+      return assets.map((a) => ({
+        assetId: a.assetId,
+        tags: [],
+        rationale: "batch parse failed"
+      }));
+    }
+
+    // Map results back to assets
+    const results: BatchResult[] = [];
+    for (const a of assets) {
+      const match = (parsed as Array<Record<string, unknown>>).find(
+        (r) => r.assetId === a.assetId
+      );
+      if (match) {
+        results.push({
+          assetId: a.assetId,
+          tags: uniqCleanTags(match.tags, maxTags),
+          rationale: typeof match.rationale === "string" ? match.rationale : ""
+        });
+      } else {
+        results.push({
+          assetId: a.assetId,
+          tags: [],
+          rationale: "not found in batch response"
+        });
+      }
+    }
+    return results;
+  } catch (e) {
+    const errMsg = e instanceof Error ? e.message : String(e);
+    // Return error for all
+    return assets.map((a) => ({
+      assetId: a.assetId,
+      tags: [],
+      rationale: `batch error: ${errMsg}`
+    }));
+  }
+}
+
 export async function POST(req: Request): Promise<Response> {
   try {
     const body = (await req.json()) as Body;
@@ -376,15 +554,23 @@ export async function POST(req: Request): Promise<Response> {
     let totalTagged = 0;
     const updates: TagUpdate[] = [];
     const errors: TagError[] = [];
+    
+    // Time limit to avoid Vercel timeout (leave 30s buffer for saving)
+    const startTime = Date.now();
+    const MAX_DURATION_MS = 270_000; // 270 seconds (4.5 min), Vercel limit is 300s
+    let timedOut = false;
 
+    // Batch size for processing multiple images in one API call
+    const BATCH_SIZE = 6;
+
+    // Collect all assets to tag first
+    const assetsToTag: (BatchAsset & { pageText: string })[] = [];
+    
     for (const page of manifest.pages) {
       const pageNumber = page.pageNumber;
       const pageText = getPageTextFallback(fullText, pageNumber);
-
       const deleted = new Set<string>(Array.isArray(page.deletedAssetIds) ? page.deletedAssetIds : []);
-
       const assets = Array.isArray(page.assets) ? page.assets : [];
-      if (!assets.length) continue;
 
       for (const asset of assets) {
         if (deleted.has(asset.assetId)) continue;
@@ -394,36 +580,81 @@ export async function POST(req: Request): Promise<Response> {
         const alreadyTagged = Array.isArray(asset.tags) && asset.tags.length > 0;
         if (alreadyTagged && !overwrite) continue;
 
-        try {
-          const { tags, rationale } = await callGeminiTagger({
-            apiKey: GEMINI_API_KEY,
-            modelName: GEMINI_DETECT_MODEL,
-            aiRules,
-            taggingJson,
-            pageNumber,
-            assetId: asset.assetId,
-            assetUrl: asset.url,
-            pageText
-          });
-
-          updates.push({ pageNumber, assetId: asset.assetId, tags, rationale });
-          totalTagged += 1;
-          
-          // Small delay between API calls to avoid rate limiting
-          await new Promise((resolve) => setTimeout(resolve, 200));
-        } catch (assetErr) {
-          // Log the error but continue with other assets
-          const errMsg = assetErr instanceof Error ? assetErr.message : String(assetErr);
-          errors.push({ pageNumber, assetId: asset.assetId, error: errMsg });
-          
-          // If rate limited, add a longer delay before continuing
-          if (errMsg.includes("rate") || errMsg.includes("429") || errMsg.includes("quota")) {
-            await new Promise((resolve) => setTimeout(resolve, 2000));
-          }
-        }
+        assetsToTag.push({
+          pageNumber,
+          assetId: asset.assetId,
+          assetUrl: asset.url,
+          pageText
+        });
       }
 
       if (limitAssets > 0 && totalConsidered > limitAssets) break;
+    }
+
+    console.log(`[tag] Found ${assetsToTag.length} assets to tag in batches of ${BATCH_SIZE}`);
+
+    // Process in batches
+    for (let i = 0; i < assetsToTag.length; i += BATCH_SIZE) {
+      // Check time limit
+      if (Date.now() - startTime > MAX_DURATION_MS) {
+        console.log(`[tag] Time limit reached after ${totalTagged} assets`);
+        timedOut = true;
+        break;
+      }
+
+      const batch = assetsToTag.slice(i, i + BATCH_SIZE);
+      console.log(`[tag] Processing batch ${Math.floor(i / BATCH_SIZE) + 1}: ${batch.length} assets`);
+
+      try {
+        const batchResults = await callGeminiBatchTagger({
+          apiKey: GEMINI_API_KEY,
+          modelName: GEMINI_DETECT_MODEL,
+          aiRules,
+          taggingJson,
+          assets: batch
+        });
+
+        for (const result of batchResults) {
+          const orig = batch.find((b) => b.assetId === result.assetId);
+          if (!orig) continue;
+
+          if (result.tags.length > 0) {
+            updates.push({
+              pageNumber: orig.pageNumber,
+              assetId: result.assetId,
+              tags: result.tags,
+              rationale: result.rationale
+            });
+            totalTagged += 1;
+          } else if (result.rationale.includes("error") || result.rationale.includes("failed")) {
+            errors.push({
+              pageNumber: orig.pageNumber,
+              assetId: result.assetId,
+              error: result.rationale
+            });
+          }
+        }
+
+        // Small delay between batch API calls
+        await new Promise((resolve) => setTimeout(resolve, 200));
+      } catch (batchErr) {
+        const errMsg = batchErr instanceof Error ? batchErr.message : String(batchErr);
+        console.error(`[tag] Batch error:`, errMsg);
+        
+        // Record errors for each asset in the failed batch
+        for (const asset of batch) {
+          errors.push({
+            pageNumber: asset.pageNumber,
+            assetId: asset.assetId,
+            error: `batch failed: ${errMsg}`
+          });
+        }
+
+        // If rate limited, add a longer delay before continuing
+        if (errMsg.includes("rate") || errMsg.includes("429") || errMsg.includes("quota")) {
+          await new Promise((resolve) => setTimeout(resolve, 5000));
+        }
+      }
     }
 
     // Re-fetch latest manifest and merge tag updates onto it, so we don't
@@ -449,7 +680,9 @@ export async function POST(req: Request): Promise<Response> {
       tagged: totalTagged,
       failed: errors.length,
       errors: errors.length > 0 ? errors.slice(0, 10) : undefined, // Limit to first 10 errors
-      model: GEMINI_DETECT_MODEL
+      model: GEMINI_DETECT_MODEL,
+      timedOut,
+      message: timedOut ? `Partial results: tagged ${totalTagged} assets before time limit. Run again to continue.` : undefined
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
