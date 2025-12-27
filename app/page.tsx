@@ -402,6 +402,43 @@ function SchemaCard({
     );
   }
 
+  // Handle asset type (image/audio with url) - e.g., KeyArtPoster
+  if (typeof value === "object" && value !== null && "url" in value) {
+    const asset = value as { url: string; source?: string; caption?: string };
+    return (
+      <div
+        style={{
+          background: "#fff",
+          borderRadius: 12,
+          overflow: "hidden",
+          boxShadow: "0 1px 3px rgba(0,0,0,0.08)",
+          border: "1px solid #e2e8f0"
+        }}
+      >
+        <div style={{ fontSize: 11, fontWeight: 600, color: colors.accent, textTransform: "uppercase", letterSpacing: "0.05em", padding: "12px 16px", background: colors.bg, borderBottom: "1px solid #e2e8f0" }}>
+          {formatFieldName(fieldName)}
+        </div>
+        <div style={{ padding: 12 }}>
+          <img
+            src={asset.url}
+            alt={asset.caption || fieldName}
+            style={{
+              width: "100%",
+              maxHeight: 400,
+              objectFit: "contain",
+              borderRadius: 8
+            }}
+          />
+          {asset.caption && (
+            <div style={{ fontSize: 12, color: "#64748b", marginTop: 8, textAlign: "center" }}>
+              {asset.caption}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   // Handle string
   if (typeof value === "string") {
     return (
