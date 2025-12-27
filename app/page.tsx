@@ -881,6 +881,14 @@ export default function Page() {
   const [schemaResultsLevel, setSchemaResultsLevel] = useState<"L1" | "L2" | "L3">("L2");
   const [schemaResultsViewMode, setSchemaResultsViewMode] = useState<"ui" | "json">("ui");
 
+  // Completeness calculation state
+  const [completenessResult, setCompletenessResult] = useState<{
+    overall: number;
+    byDomain: Record<string, number>;
+    alert: { color: string; message: string };
+  } | null>(null);
+  const [completenessVisible, setCompletenessVisible] = useState(false);
+
   function log(msg: string) {
     const ts = new Date().toLocaleTimeString();
     setDebugLog((prev) => [...prev.slice(-99), `[${ts}] ${msg}`]);
@@ -1932,6 +1940,49 @@ export default function Page() {
           }}
         >
           7. Fill Schema
+        </button>
+
+        <button
+          type="button"
+          disabled={!schemaResultsDraft}
+          onClick={() => {
+            if (!schemaResultsDraft) return;
+            try {
+              const parsed = JSON.parse(schemaResultsDraft);
+              const levelData = parsed[schemaResultsLevel] || parsed["L2"] || {};
+              const result = calculateCompleteness(levelData, completenessRulesDraft);
+              setCompletenessResult(result);
+              setCompletenessVisible(true);
+            } catch {
+              setCompletenessResult({ overall: 0, byDomain: {}, alert: { color: "#ef4444", message: "Invalid schema JSON" } });
+              setCompletenessVisible(true);
+            }
+          }}
+          style={{
+            border: "1px solid #000",
+            background: schemaResultsDraft ? "#000" : "#fff",
+            color: schemaResultsDraft ? "#fff" : "#000",
+            padding: "10px 12px",
+            borderRadius: 12,
+            opacity: schemaResultsDraft ? 1 : 0.4,
+            display: "flex",
+            alignItems: "center",
+            gap: 6
+          }}
+        >
+          8. Completeness %
+          {completenessVisible && completenessResult && (
+            <span style={{
+              background: completenessResult.alert.color,
+              color: "#fff",
+              padding: "2px 8px",
+              borderRadius: 10,
+              fontSize: 12,
+              fontWeight: 700
+            }}>
+              {completenessResult.overall}%
+            </span>
+          )}
         </button>
       </div>
 
