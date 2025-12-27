@@ -1346,6 +1346,13 @@ export default function Page() {
     setLastError("");
     setBusy("Uploading SOURCE...");
 
+    // Clear all existing data since we're starting fresh with a new source
+    setSchemaResults("");
+    setSchemaResultsDraft("");
+    setFormattedText("");
+    setExtractedText("");
+    setManifest(null);
+
     try {
       // Always create a new project for each upload
       const p = await createProject();
