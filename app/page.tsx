@@ -202,6 +202,16 @@ function Tabs({
   );
 }
 
+// Domain colors for visual differentiation
+const DOMAIN_COLORS: Record<string, { bg: string; accent: string; light: string }> = {
+  OVERVIEW: { bg: "#f0f7ff", accent: "#2563eb", light: "#dbeafe" },
+  CHARACTERS: { bg: "#fdf2f8", accent: "#db2777", light: "#fce7f3" },
+  WORLD: { bg: "#ecfdf5", accent: "#059669", light: "#d1fae5" },
+  LORE: { bg: "#fefce8", accent: "#ca8a04", light: "#fef9c3" },
+  STYLE: { bg: "#faf5ff", accent: "#9333ea", light: "#f3e8ff" },
+  STORY: { bg: "#fff7ed", accent: "#ea580c", light: "#ffedd5" }
+};
+
 // Schema Results UI Component - renders filled schema as cards
 function SchemaResultsUI({
   jsonString,
@@ -212,14 +222,16 @@ function SchemaResultsUI({
   domain: string;
   level: "L1" | "L2" | "L3";
 }) {
+  const colors = DOMAIN_COLORS[domain] || DOMAIN_COLORS.OVERVIEW;
+
   // Parse JSON safely
   let data: Record<string, unknown> = {};
   try {
     data = JSON.parse(jsonString) as Record<string, unknown>;
   } catch {
     return (
-      <div style={{ padding: 12, background: "#fee", borderRadius: 8, fontSize: 13 }}>
-        Invalid JSON. Switch to Raw JSON view to fix.
+      <div style={{ padding: 16, background: "#fef2f2", borderRadius: 12, fontSize: 13, color: "#dc2626", border: "1px solid #fecaca" }}>
+        ⚠️ Invalid JSON. Switch to Raw JSON view to fix.
       </div>
     );
   }
@@ -230,7 +242,8 @@ function SchemaResultsUI({
 
   if (Object.keys(domainData).length === 0) {
     return (
-      <div style={{ padding: 12, background: "#f5f5f5", borderRadius: 8, fontSize: 13, opacity: 0.7 }}>
+      <div style={{ padding: 24, background: "#f8fafc", borderRadius: 12, fontSize: 14, color: "#64748b", textAlign: "center", border: "1px dashed #e2e8f0" }}>
+        <div style={{ fontSize: 24, marginBottom: 8 }}>📭</div>
         No data for {level} → {domain}
       </div>
     );
@@ -238,16 +251,24 @@ function SchemaResultsUI({
 
   // Render cards for each field
   return (
-    <div style={{ display: "grid", gap: 12 }}>
+    <div style={{ display: "grid", gap: 16 }}>
       {Object.entries(domainData).map(([key, value]) => (
-        <SchemaCard key={key} fieldName={key} value={value} />
+        <SchemaCard key={key} fieldName={key} value={value} colors={colors} />
       ))}
     </div>
   );
 }
 
 // Individual card component for schema fields
-function SchemaCard({ fieldName, value }: { fieldName: string; value: unknown }) {
+function SchemaCard({
+  fieldName,
+  value,
+  colors
+}: {
+  fieldName: string;
+  value: unknown;
+  colors: { bg: string; accent: string; light: string };
+}) {
   const formatFieldName = (name: string) => {
     // Convert camelCase/PascalCase to readable format
     return name.replace(/([A-Z])/g, " $1").trim();
@@ -256,11 +277,18 @@ function SchemaCard({ fieldName, value }: { fieldName: string; value: unknown })
   // Handle null/undefined
   if (value === null || value === undefined) {
     return (
-      <div style={{ border: "1px solid #ddd", borderRadius: 10, padding: 14, background: "#fafafa" }}>
-        <div style={{ fontSize: 12, fontWeight: 700, color: "#666", marginBottom: 6 }}>
+      <div
+        style={{
+          background: "#f8fafc",
+          borderRadius: 12,
+          padding: 16,
+          border: "1px dashed #e2e8f0"
+        }}
+      >
+        <div style={{ fontSize: 11, fontWeight: 600, color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>
           {formatFieldName(fieldName)}
         </div>
-        <div style={{ fontSize: 13, opacity: 0.5, fontStyle: "italic" }}>Not specified</div>
+        <div style={{ fontSize: 14, color: "#94a3b8", fontStyle: "italic" }}>Not specified</div>
       </div>
     );
   }
@@ -268,32 +296,52 @@ function SchemaCard({ fieldName, value }: { fieldName: string; value: unknown })
   // Handle string
   if (typeof value === "string") {
     return (
-      <div style={{ border: "1px solid #ddd", borderRadius: 10, padding: 14, background: "#fff" }}>
-        <div style={{ fontSize: 12, fontWeight: 700, color: "#666", marginBottom: 6 }}>
+      <div
+        style={{
+          background: "#fff",
+          borderRadius: 12,
+          padding: 16,
+          boxShadow: "0 1px 3px rgba(0,0,0,0.08)",
+          border: "1px solid #e2e8f0"
+        }}
+      >
+        <div style={{ fontSize: 11, fontWeight: 600, color: colors.accent, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>
           {formatFieldName(fieldName)}
         </div>
-        <div style={{ fontSize: 14, lineHeight: 1.5 }}>{value || <span style={{ opacity: 0.5 }}>—</span>}</div>
+        <div style={{ fontSize: 14, lineHeight: 1.6, color: "#1e293b" }}>
+          {value || <span style={{ color: "#94a3b8" }}>—</span>}
+        </div>
       </div>
     );
   }
 
-  // Handle array of strings
+  // Handle array of strings (tags)
   if (Array.isArray(value) && value.every((v) => typeof v === "string")) {
     return (
-      <div style={{ border: "1px solid #ddd", borderRadius: 10, padding: 14, background: "#fff" }}>
-        <div style={{ fontSize: 12, fontWeight: 700, color: "#666", marginBottom: 8 }}>
+      <div
+        style={{
+          background: "#fff",
+          borderRadius: 12,
+          padding: 16,
+          boxShadow: "0 1px 3px rgba(0,0,0,0.08)",
+          border: "1px solid #e2e8f0"
+        }}
+      >
+        <div style={{ fontSize: 11, fontWeight: 600, color: colors.accent, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 10 }}>
           {formatFieldName(fieldName)}
         </div>
         {value.length > 0 ? (
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
             {value.map((item, i) => (
               <span
                 key={i}
                 style={{
-                  background: "#f0f0f0",
-                  padding: "4px 10px",
-                  borderRadius: 6,
-                  fontSize: 13
+                  background: colors.light,
+                  color: colors.accent,
+                  padding: "6px 12px",
+                  borderRadius: 20,
+                  fontSize: 13,
+                  fontWeight: 500
                 }}
               >
                 {item}
@@ -301,7 +349,7 @@ function SchemaCard({ fieldName, value }: { fieldName: string; value: unknown })
             ))}
           </div>
         ) : (
-          <div style={{ fontSize: 13, opacity: 0.5 }}>—</div>
+          <div style={{ fontSize: 14, color: "#94a3b8" }}>—</div>
         )}
       </div>
     );
@@ -310,22 +358,46 @@ function SchemaCard({ fieldName, value }: { fieldName: string; value: unknown })
   // Handle array of objects (like CharacterList, Locations, etc.)
   if (Array.isArray(value) && value.length > 0 && typeof value[0] === "object") {
     return (
-      <div style={{ border: "1px solid #000", borderRadius: 10, overflow: "hidden" }}>
+      <div
+        style={{
+          background: colors.bg,
+          borderRadius: 16,
+          overflow: "hidden",
+          border: `1px solid ${colors.light}`
+        }}
+      >
         <div
           style={{
-            fontSize: 13,
+            fontSize: 12,
             fontWeight: 700,
-            padding: "10px 14px",
-            background: "#f5f5f5",
-            borderBottom: "1px solid #ddd"
+            padding: "14px 18px",
+            color: colors.accent,
+            borderBottom: `1px solid ${colors.light}`,
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            textTransform: "uppercase",
+            letterSpacing: "0.05em"
           }}
         >
-          {formatFieldName(fieldName)} ({value.length})
+          {formatFieldName(fieldName)}
+          <span
+            style={{
+              background: colors.accent,
+              color: "#fff",
+              padding: "2px 8px",
+              borderRadius: 10,
+              fontSize: 11,
+              fontWeight: 600
+            }}
+          >
+            {value.length}
+          </span>
         </div>
-        <div style={{ display: "grid", gap: 1, background: "#eee" }}>
+        <div style={{ display: "grid", gap: 2, background: colors.light }}>
           {value.map((item, i) => (
-            <div key={i} style={{ padding: 14, background: "#fff" }}>
-              <ObjectCard data={item as Record<string, unknown>} index={i} />
+            <div key={i} style={{ background: "#fff" }}>
+              <ObjectCard data={item as Record<string, unknown>} index={i} colors={colors} />
             </div>
           ))}
         </div>
@@ -337,21 +409,32 @@ function SchemaCard({ fieldName, value }: { fieldName: string; value: unknown })
   if (typeof value === "object" && value !== null) {
     const obj = value as Record<string, unknown>;
     return (
-      <div style={{ border: "1px solid #ddd", borderRadius: 10, overflow: "hidden" }}>
+      <div
+        style={{
+          background: "#fff",
+          borderRadius: 12,
+          overflow: "hidden",
+          boxShadow: "0 1px 3px rgba(0,0,0,0.08)",
+          border: "1px solid #e2e8f0"
+        }}
+      >
         <div
           style={{
-            fontSize: 13,
-            fontWeight: 700,
-            padding: "10px 14px",
-            background: "#f9f9f9",
-            borderBottom: "1px solid #eee"
+            fontSize: 11,
+            fontWeight: 600,
+            padding: "12px 16px",
+            color: colors.accent,
+            background: colors.bg,
+            borderBottom: "1px solid #e2e8f0",
+            textTransform: "uppercase",
+            letterSpacing: "0.05em"
           }}
         >
           {formatFieldName(fieldName)}
         </div>
-        <div style={{ padding: 14, display: "grid", gap: 10 }}>
+        <div style={{ padding: 16, display: "grid", gap: 14 }}>
           {Object.entries(obj).map(([k, v]) => (
-            <NestedField key={k} fieldName={k} value={v} />
+            <NestedField key={k} fieldName={k} value={v} colors={colors} />
           ))}
         </div>
       </div>
@@ -360,17 +443,33 @@ function SchemaCard({ fieldName, value }: { fieldName: string; value: unknown })
 
   // Fallback for other types
   return (
-    <div style={{ border: "1px solid #ddd", borderRadius: 10, padding: 14, background: "#fff" }}>
-      <div style={{ fontSize: 12, fontWeight: 700, color: "#666", marginBottom: 6 }}>
+    <div
+      style={{
+        background: "#fff",
+        borderRadius: 12,
+        padding: 16,
+        boxShadow: "0 1px 3px rgba(0,0,0,0.08)",
+        border: "1px solid #e2e8f0"
+      }}
+    >
+      <div style={{ fontSize: 11, fontWeight: 600, color: colors.accent, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>
         {formatFieldName(fieldName)}
       </div>
-      <div style={{ fontSize: 13 }}>{String(value)}</div>
+      <div style={{ fontSize: 14, color: "#1e293b" }}>{String(value)}</div>
     </div>
   );
 }
 
 // Nested field renderer for objects within objects
-function NestedField({ fieldName, value }: { fieldName: string; value: unknown }) {
+function NestedField({
+  fieldName,
+  value,
+  colors
+}: {
+  fieldName: string;
+  value: unknown;
+  colors: { bg: string; accent: string; light: string };
+}) {
   const formatFieldName = (name: string) => name.replace(/([A-Z])/g, " $1").trim();
 
   // Handle asset type (image/audio with url)
@@ -378,16 +477,23 @@ function NestedField({ fieldName, value }: { fieldName: string; value: unknown }
     const asset = value as { url: string; source?: string; caption?: string };
     return (
       <div>
-        <div style={{ fontSize: 11, fontWeight: 600, color: "#888", marginBottom: 4 }}>
+        <div style={{ fontSize: 10, fontWeight: 600, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>
           {formatFieldName(fieldName)}
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <img
             src={asset.url}
             alt={asset.caption || fieldName}
-            style={{ width: 60, height: 60, objectFit: "cover", borderRadius: 6, border: "1px solid #ddd" }}
+            style={{
+              width: 64,
+              height: 64,
+              objectFit: "cover",
+              borderRadius: 8,
+              border: "2px solid #e2e8f0",
+              boxShadow: "0 2px 4px rgba(0,0,0,0.1)"
+            }}
           />
-          {asset.caption && <span style={{ fontSize: 12, opacity: 0.7 }}>{asset.caption}</span>}
+          {asset.caption && <span style={{ fontSize: 13, color: "#64748b" }}>{asset.caption}</span>}
         </div>
       </div>
     );
@@ -395,48 +501,118 @@ function NestedField({ fieldName, value }: { fieldName: string; value: unknown }
 
   // Handle string
   if (typeof value === "string") {
+    // Skip empty or "Unknown" values for cleaner UI
+    if (!value || value === "Unknown") {
+      return null;
+    }
     return (
       <div>
-        <div style={{ fontSize: 11, fontWeight: 600, color: "#888", marginBottom: 2 }}>
+        <div style={{ fontSize: 10, fontWeight: 600, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>
           {formatFieldName(fieldName)}
         </div>
-        <div style={{ fontSize: 13 }}>{value || <span style={{ opacity: 0.4 }}>—</span>}</div>
+        <div style={{ fontSize: 14, color: "#1e293b", lineHeight: 1.5 }}>{value}</div>
       </div>
     );
   }
 
   // Handle string array
   if (Array.isArray(value) && value.every((v) => typeof v === "string")) {
+    if (value.length === 0) return null;
     return (
       <div>
-        <div style={{ fontSize: 11, fontWeight: 600, color: "#888", marginBottom: 4 }}>
+        <div style={{ fontSize: 10, fontWeight: 600, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>
           {formatFieldName(fieldName)}
         </div>
-        {value.length > 0 ? (
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-            {value.map((item, i) => (
-              <span key={i} style={{ background: "#f0f0f0", padding: "2px 8px", borderRadius: 4, fontSize: 12 }}>
-                {item}
-              </span>
-            ))}
-          </div>
-        ) : (
-          <div style={{ fontSize: 12, opacity: 0.4 }}>—</div>
-        )}
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+          {value.map((item, i) => (
+            <span
+              key={i}
+              style={{
+                background: colors.light,
+                color: colors.accent,
+                padding: "4px 10px",
+                borderRadius: 16,
+                fontSize: 12,
+                fontWeight: 500
+              }}
+            >
+              {item}
+            </span>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  // Handle array of objects (like relationships)
+  if (Array.isArray(value) && value.length > 0 && typeof value[0] === "object") {
+    return (
+      <div>
+        <div style={{ fontSize: 10, fontWeight: 600, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>
+          {formatFieldName(fieldName)}
+        </div>
+        <div style={{ display: "grid", gap: 8 }}>
+          {value.map((item, i) => {
+            const obj = item as Record<string, unknown>;
+            const targetName = obj.TargetCharacterName || obj.Name || obj.name || `Item ${i + 1}`;
+            const relType = obj.RelationshipType || obj.Type || obj.type || "";
+            const desc = obj.Description || obj.description || "";
+            return (
+              <div
+                key={i}
+                style={{
+                  background: colors.bg,
+                  padding: "10px 12px",
+                  borderRadius: 8,
+                  border: `1px solid ${colors.light}`
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ fontWeight: 600, fontSize: 13, color: "#1e293b" }}>{String(targetName)}</span>
+                  {relType && (
+                    <span
+                      style={{
+                        background: colors.accent,
+                        color: "#fff",
+                        padding: "2px 8px",
+                        borderRadius: 10,
+                        fontSize: 10,
+                        fontWeight: 600
+                      }}
+                    >
+                      {String(relType)}
+                    </span>
+                  )}
+                </div>
+                {desc && <div style={{ fontSize: 12, color: "#64748b", marginTop: 4 }}>{String(desc)}</div>}
+              </div>
+            );
+          })}
+        </div>
       </div>
     );
   }
 
   // Handle nested object
   if (typeof value === "object" && value !== null) {
+    const obj = value as Record<string, unknown>;
+    const entries = Object.entries(obj).filter(([, v]) => v && v !== "Unknown");
+    if (entries.length === 0) return null;
     return (
-      <div style={{ paddingLeft: 12, borderLeft: "2px solid #eee" }}>
-        <div style={{ fontSize: 11, fontWeight: 600, color: "#888", marginBottom: 6 }}>
+      <div
+        style={{
+          padding: "12px 14px",
+          background: colors.bg,
+          borderRadius: 8,
+          border: `1px solid ${colors.light}`
+        }}
+      >
+        <div style={{ fontSize: 10, fontWeight: 600, color: colors.accent, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 10 }}>
           {formatFieldName(fieldName)}
         </div>
-        <div style={{ display: "grid", gap: 8 }}>
-          {Object.entries(value as Record<string, unknown>).map(([k, v]) => (
-            <NestedField key={k} fieldName={k} value={v} />
+        <div style={{ display: "grid", gap: 10 }}>
+          {entries.map(([k, v]) => (
+            <NestedField key={k} fieldName={k} value={v} colors={colors} />
           ))}
         </div>
       </div>
@@ -445,45 +621,102 @@ function NestedField({ fieldName, value }: { fieldName: string; value: unknown }
 
   return (
     <div>
-      <div style={{ fontSize: 11, fontWeight: 600, color: "#888", marginBottom: 2 }}>
+      <div style={{ fontSize: 10, fontWeight: 600, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>
         {formatFieldName(fieldName)}
       </div>
-      <div style={{ fontSize: 13 }}>{value === null ? "—" : String(value)}</div>
+      <div style={{ fontSize: 14, color: "#1e293b" }}>{value === null ? "—" : String(value)}</div>
     </div>
   );
 }
 
 // Card for object items in arrays (like individual characters, locations)
-function ObjectCard({ data, index }: { data: Record<string, unknown>; index: number }) {
+function ObjectCard({
+  data,
+  index,
+  colors
+}: {
+  data: Record<string, unknown>;
+  index: number;
+  colors: { bg: string; accent: string; light: string };
+}) {
   // Try to find a name/title field
   const nameField = data.Name || data.name || data.Title || data.title || data.NameLabel || `Item ${index + 1}`;
   const headline = data.Headline || data.headline || "";
+  const role = data.Role || data.role || "";
 
   // Check for lead image
   const imagesObj = data.Images as Record<string, unknown> | undefined;
   const leadImage = imagesObj?.LeadImage as { url: string } | undefined;
 
+  // Group fields into sections for better organization
+  const skipFields = ["Name", "name", "Title", "title", "NameLabel", "Headline", "headline", "Images", "Role", "role"];
+
   return (
-    <div>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
-        {leadImage?.url && (
+    <div style={{ padding: 20 }}>
+      {/* Header with image and name */}
+      <div style={{ display: "flex", gap: 16, marginBottom: 16 }}>
+        {leadImage?.url ? (
           <img
             src={leadImage.url}
             alt={String(nameField)}
-            style={{ width: 48, height: 48, objectFit: "cover", borderRadius: 8, border: "1px solid #ddd" }}
+            style={{
+              width: 80,
+              height: 80,
+              objectFit: "cover",
+              borderRadius: 12,
+              border: "3px solid #fff",
+              boxShadow: "0 4px 12px rgba(0,0,0,0.15)"
+            }}
           />
+        ) : (
+          <div
+            style={{
+              width: 80,
+              height: 80,
+              borderRadius: 12,
+              background: `linear-gradient(135deg, ${colors.light} 0%, ${colors.bg} 100%)`,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              fontSize: 28,
+              color: colors.accent,
+              fontWeight: 700,
+              border: `2px solid ${colors.light}`
+            }}
+          >
+            {String(nameField).charAt(0).toUpperCase()}
+          </div>
         )}
-        <div>
-          <div style={{ fontSize: 15, fontWeight: 700 }}>{String(nameField)}</div>
-          {headline && <div style={{ fontSize: 13, opacity: 0.7, marginTop: 2 }}>{String(headline)}</div>}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 18, fontWeight: 700, color: "#0f172a", marginBottom: 4 }}>{String(nameField)}</div>
+          {role && (
+            <span
+              style={{
+                display: "inline-block",
+                background: colors.accent,
+                color: "#fff",
+                padding: "4px 10px",
+                borderRadius: 16,
+                fontSize: 11,
+                fontWeight: 600,
+                textTransform: "uppercase",
+                letterSpacing: "0.05em",
+                marginBottom: 6
+              }}
+            >
+              {String(role)}
+            </span>
+          )}
+          {headline && <div style={{ fontSize: 14, color: "#64748b", lineHeight: 1.4, marginTop: 4 }}>{String(headline)}</div>}
         </div>
       </div>
 
-      <div style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))" }}>
+      {/* Other fields in a grid */}
+      <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))" }}>
         {Object.entries(data)
-          .filter(([k]) => !["Name", "name", "Title", "title", "NameLabel", "Headline", "headline", "Images"].includes(k))
+          .filter(([k, v]) => !skipFields.includes(k) && v && v !== "Unknown")
           .map(([k, v]) => (
-            <NestedField key={k} fieldName={k} value={v} />
+            <NestedField key={k} fieldName={k} value={v} colors={colors} />
           ))}
       </div>
     </div>
@@ -2105,62 +2338,73 @@ export default function Page() {
             {schemaResultsDraft ? (
               <>
                 {/* View mode toggle and controls */}
-                <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap", alignItems: "center" }}>
-                  <div style={{ display: "flex", gap: 4 }}>
+                <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap", alignItems: "center" }}>
+                  <div style={{ display: "flex", background: "#f1f5f9", borderRadius: 22, padding: 3 }}>
                     <button
                       type="button"
                       onClick={() => setSchemaResultsViewMode("ui")}
                       style={{
-                        border: "1px solid #000",
-                        background: schemaResultsViewMode === "ui" ? "#000" : "#fff",
-                        color: schemaResultsViewMode === "ui" ? "#fff" : "#000",
-                        padding: "6px 12px",
-                        borderRadius: 8,
+                        border: "none",
+                        background: schemaResultsViewMode === "ui" ? "#fff" : "transparent",
+                        color: schemaResultsViewMode === "ui" ? "#0f172a" : "#64748b",
+                        padding: "8px 16px",
+                        borderRadius: 20,
                         fontSize: 12,
-                        fontWeight: 600
+                        fontWeight: 600,
+                        boxShadow: schemaResultsViewMode === "ui" ? "0 1px 3px rgba(0,0,0,0.1)" : "none",
+                        transition: "all 0.15s ease",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 6
                       }}
                     >
-                      UI View
+                      <span>🎨</span> UI View
                     </button>
                     <button
                       type="button"
                       onClick={() => setSchemaResultsViewMode("json")}
                       style={{
-                        border: "1px solid #000",
-                        background: schemaResultsViewMode === "json" ? "#000" : "#fff",
-                        color: schemaResultsViewMode === "json" ? "#fff" : "#000",
-                        padding: "6px 12px",
-                        borderRadius: 8,
+                        border: "none",
+                        background: schemaResultsViewMode === "json" ? "#fff" : "transparent",
+                        color: schemaResultsViewMode === "json" ? "#0f172a" : "#64748b",
+                        padding: "8px 16px",
+                        borderRadius: 20,
                         fontSize: 12,
-                        fontWeight: 600
+                        fontWeight: 600,
+                        boxShadow: schemaResultsViewMode === "json" ? "0 1px 3px rgba(0,0,0,0.1)" : "none",
+                        transition: "all 0.15s ease",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 6
                       }}
                     >
-                      Raw JSON
+                      <span>{ }</span> Raw JSON
                     </button>
                   </div>
 
                   {schemaResultsViewMode === "ui" && (
                     <>
-                      <div style={{ width: 1, height: 24, background: "#ccc", margin: "0 8px" }} />
+                      <div style={{ width: 1, height: 28, background: "#e2e8f0", margin: "0 8px" }} />
                       
                       {/* Level selector */}
-                      <div style={{ display: "flex", gap: 4 }}>
+                      <div style={{ display: "flex", gap: 6 }}>
                         {(["L1", "L2", "L3"] as const).map((level) => (
                           <button
                             key={level}
                             type="button"
                             onClick={() => setSchemaResultsLevel(level)}
                             style={{
-                              border: "1px solid #000",
-                              background: schemaResultsLevel === level ? "#000" : "#fff",
-                              color: schemaResultsLevel === level ? "#fff" : "#000",
-                              padding: "6px 10px",
-                              borderRadius: 8,
+                              border: schemaResultsLevel === level ? "2px solid #0f172a" : "1px solid #e2e8f0",
+                              background: schemaResultsLevel === level ? "#0f172a" : "#fff",
+                              color: schemaResultsLevel === level ? "#fff" : "#64748b",
+                              padding: "6px 14px",
+                              borderRadius: 20,
                               fontSize: 12,
-                              fontWeight: 600
+                              fontWeight: 600,
+                              transition: "all 0.15s ease"
                             }}
                           >
-                            {level}
+                            {level === "L1" ? "🌍 L1 Global" : level === "L2" ? "📖 L2 Project" : "🎬 L3 Detailed"}
                           </button>
                         ))}
                       </div>
@@ -2171,25 +2415,42 @@ export default function Page() {
                 {schemaResultsViewMode === "ui" && (
                   <>
                     {/* Domain tabs */}
-                    <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap" }}>
-                      {["OVERVIEW", "CHARACTERS", "WORLD", "LORE", "STYLE", "STORY"].map((domain) => (
-                        <button
-                          key={domain}
-                          type="button"
-                          onClick={() => setSchemaResultsTab(domain)}
-                          style={{
-                            border: "1px solid #000",
-                            background: schemaResultsTab === domain ? "#000" : "#fff",
-                            color: schemaResultsTab === domain ? "#fff" : "#000",
-                            padding: "8px 14px",
-                            borderRadius: 10,
-                            fontSize: 13,
-                            fontWeight: 600
-                          }}
-                        >
-                          {domain}
-                        </button>
-                      ))}
+                    <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
+                      {(["OVERVIEW", "CHARACTERS", "WORLD", "LORE", "STYLE", "STORY"] as const).map((domain) => {
+                        const colors = DOMAIN_COLORS[domain];
+                        const isActive = schemaResultsTab === domain;
+                        const icons: Record<string, string> = {
+                          OVERVIEW: "📋",
+                          CHARACTERS: "👤",
+                          WORLD: "🌍",
+                          LORE: "📜",
+                          STYLE: "🎨",
+                          STORY: "📖"
+                        };
+                        return (
+                          <button
+                            key={domain}
+                            type="button"
+                            onClick={() => setSchemaResultsTab(domain)}
+                            style={{
+                              border: isActive ? `2px solid ${colors.accent}` : "1px solid #e2e8f0",
+                              background: isActive ? colors.bg : "#fff",
+                              color: isActive ? colors.accent : "#64748b",
+                              padding: "8px 16px",
+                              borderRadius: 24,
+                              fontSize: 13,
+                              fontWeight: 600,
+                              transition: "all 0.15s ease",
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 6
+                            }}
+                          >
+                            <span>{icons[domain]}</span>
+                            {domain}
+                          </button>
+                        );
+                      })}
                     </div>
 
                     {/* Content cards */}
