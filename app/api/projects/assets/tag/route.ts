@@ -190,25 +190,46 @@ async function geminiGenerateWithImage(
   imageBase64: string,
   imageMimeType: string
 ) {
-  const res = await model.generateContent({
-    contents: [
-      {
-        role: "user",
-        parts: [
-          { inlineData: { mimeType: imageMimeType, data: imageBase64 } },
-          { text: prompt }
-        ]
+  let res;
+  try {
+    res = await model.generateContent({
+      contents: [
+        {
+          role: "user",
+          parts: [
+            { inlineData: { mimeType: imageMimeType, data: imageBase64 } },
+            { text: prompt }
+          ]
+        }
+      ],
+      generationConfig: {
+        temperature: 0.2,
+        topP: 0.9,
+        maxOutputTokens: 600
       }
-    ],
-    generationConfig: {
-      temperature: 0.2,
-      topP: 0.9,
-      maxOutputTokens: 600
+    });
+  } catch (e) {
+    // Handle Gemini API errors (rate limits, content filtering, etc.)
+    const errMsg = e instanceof Error ? e.message : String(e);
+    if (errMsg.includes("pattern") || errMsg.includes("SAFETY") || errMsg.includes("blocked")) {
+      throw new Error(`Gemini content filter: ${errMsg}`);
     }
-  });
+    if (errMsg.includes("429") || errMsg.includes("quota") || errMsg.includes("rate")) {
+      throw new Error(`Gemini rate limit: ${errMsg}`);
+    }
+    throw new Error(`Gemini API error: ${errMsg}`);
+  }
 
   // Primary: response.text()
-  const text = res.response.text?.() ?? "";
+  let text = "";
+  try {
+    text = res.response.text?.() ?? "";
+  } catch (e) {
+    // Sometimes .text() throws if blocked
+    const errMsg = e instanceof Error ? e.message : String(e);
+    throw new Error(`Gemini response error: ${errMsg}`);
+  }
+  
   if (text && text.trim()) return { text, raw: res };
 
   // Fallback: candidates parts
@@ -384,10 +405,18 @@ export async function POST(req: Request): Promise<Response> {
 
           updates.push({ pageNumber, assetId: asset.assetId, tags, rationale });
           totalTagged += 1;
+          
+          // Small delay between API calls to avoid rate limiting
+          await new Promise((resolve) => setTimeout(resolve, 200));
         } catch (assetErr) {
           // Log the error but continue with other assets
           const errMsg = assetErr instanceof Error ? assetErr.message : String(assetErr);
           errors.push({ pageNumber, assetId: asset.assetId, error: errMsg });
+          
+          // If rate limited, add a longer delay before continuing
+          if (errMsg.includes("rate") || errMsg.includes("429") || errMsg.includes("quota")) {
+            await new Promise((resolve) => setTimeout(resolve, 2000));
+          }
         }
       }
 
