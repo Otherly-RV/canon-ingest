@@ -202,6 +202,294 @@ function Tabs({
   );
 }
 
+// Schema Results UI Component - renders filled schema as cards
+function SchemaResultsUI({
+  jsonString,
+  domain,
+  level
+}: {
+  jsonString: string;
+  domain: string;
+  level: "L1" | "L2" | "L3";
+}) {
+  // Parse JSON safely
+  let data: Record<string, unknown> = {};
+  try {
+    data = JSON.parse(jsonString) as Record<string, unknown>;
+  } catch {
+    return (
+      <div style={{ padding: 12, background: "#fee", borderRadius: 8, fontSize: 13 }}>
+        Invalid JSON. Switch to Raw JSON view to fix.
+      </div>
+    );
+  }
+
+  // Navigate to the correct level and domain
+  const levelData = (data[level] as Record<string, unknown>) ?? {};
+  const domainData = (levelData[domain] as Record<string, unknown>) ?? {};
+
+  if (Object.keys(domainData).length === 0) {
+    return (
+      <div style={{ padding: 12, background: "#f5f5f5", borderRadius: 8, fontSize: 13, opacity: 0.7 }}>
+        No data for {level} → {domain}
+      </div>
+    );
+  }
+
+  // Render cards for each field
+  return (
+    <div style={{ display: "grid", gap: 12 }}>
+      {Object.entries(domainData).map(([key, value]) => (
+        <SchemaCard key={key} fieldName={key} value={value} />
+      ))}
+    </div>
+  );
+}
+
+// Individual card component for schema fields
+function SchemaCard({ fieldName, value }: { fieldName: string; value: unknown }) {
+  const formatFieldName = (name: string) => {
+    // Convert camelCase/PascalCase to readable format
+    return name.replace(/([A-Z])/g, " $1").trim();
+  };
+
+  // Handle null/undefined
+  if (value === null || value === undefined) {
+    return (
+      <div style={{ border: "1px solid #ddd", borderRadius: 10, padding: 14, background: "#fafafa" }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: "#666", marginBottom: 6 }}>
+          {formatFieldName(fieldName)}
+        </div>
+        <div style={{ fontSize: 13, opacity: 0.5, fontStyle: "italic" }}>Not specified</div>
+      </div>
+    );
+  }
+
+  // Handle string
+  if (typeof value === "string") {
+    return (
+      <div style={{ border: "1px solid #ddd", borderRadius: 10, padding: 14, background: "#fff" }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: "#666", marginBottom: 6 }}>
+          {formatFieldName(fieldName)}
+        </div>
+        <div style={{ fontSize: 14, lineHeight: 1.5 }}>{value || <span style={{ opacity: 0.5 }}>—</span>}</div>
+      </div>
+    );
+  }
+
+  // Handle array of strings
+  if (Array.isArray(value) && value.every((v) => typeof v === "string")) {
+    return (
+      <div style={{ border: "1px solid #ddd", borderRadius: 10, padding: 14, background: "#fff" }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: "#666", marginBottom: 8 }}>
+          {formatFieldName(fieldName)}
+        </div>
+        {value.length > 0 ? (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {value.map((item, i) => (
+              <span
+                key={i}
+                style={{
+                  background: "#f0f0f0",
+                  padding: "4px 10px",
+                  borderRadius: 6,
+                  fontSize: 13
+                }}
+              >
+                {item}
+              </span>
+            ))}
+          </div>
+        ) : (
+          <div style={{ fontSize: 13, opacity: 0.5 }}>—</div>
+        )}
+      </div>
+    );
+  }
+
+  // Handle array of objects (like CharacterList, Locations, etc.)
+  if (Array.isArray(value) && value.length > 0 && typeof value[0] === "object") {
+    return (
+      <div style={{ border: "1px solid #000", borderRadius: 10, overflow: "hidden" }}>
+        <div
+          style={{
+            fontSize: 13,
+            fontWeight: 700,
+            padding: "10px 14px",
+            background: "#f5f5f5",
+            borderBottom: "1px solid #ddd"
+          }}
+        >
+          {formatFieldName(fieldName)} ({value.length})
+        </div>
+        <div style={{ display: "grid", gap: 1, background: "#eee" }}>
+          {value.map((item, i) => (
+            <div key={i} style={{ padding: 14, background: "#fff" }}>
+              <ObjectCard data={item as Record<string, unknown>} index={i} />
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  // Handle nested object
+  if (typeof value === "object" && value !== null) {
+    const obj = value as Record<string, unknown>;
+    return (
+      <div style={{ border: "1px solid #ddd", borderRadius: 10, overflow: "hidden" }}>
+        <div
+          style={{
+            fontSize: 13,
+            fontWeight: 700,
+            padding: "10px 14px",
+            background: "#f9f9f9",
+            borderBottom: "1px solid #eee"
+          }}
+        >
+          {formatFieldName(fieldName)}
+        </div>
+        <div style={{ padding: 14, display: "grid", gap: 10 }}>
+          {Object.entries(obj).map(([k, v]) => (
+            <NestedField key={k} fieldName={k} value={v} />
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  // Fallback for other types
+  return (
+    <div style={{ border: "1px solid #ddd", borderRadius: 10, padding: 14, background: "#fff" }}>
+      <div style={{ fontSize: 12, fontWeight: 700, color: "#666", marginBottom: 6 }}>
+        {formatFieldName(fieldName)}
+      </div>
+      <div style={{ fontSize: 13 }}>{String(value)}</div>
+    </div>
+  );
+}
+
+// Nested field renderer for objects within objects
+function NestedField({ fieldName, value }: { fieldName: string; value: unknown }) {
+  const formatFieldName = (name: string) => name.replace(/([A-Z])/g, " $1").trim();
+
+  // Handle asset type (image/audio with url)
+  if (typeof value === "object" && value !== null && "url" in value) {
+    const asset = value as { url: string; source?: string; caption?: string };
+    return (
+      <div>
+        <div style={{ fontSize: 11, fontWeight: 600, color: "#888", marginBottom: 4 }}>
+          {formatFieldName(fieldName)}
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <img
+            src={asset.url}
+            alt={asset.caption || fieldName}
+            style={{ width: 60, height: 60, objectFit: "cover", borderRadius: 6, border: "1px solid #ddd" }}
+          />
+          {asset.caption && <span style={{ fontSize: 12, opacity: 0.7 }}>{asset.caption}</span>}
+        </div>
+      </div>
+    );
+  }
+
+  // Handle string
+  if (typeof value === "string") {
+    return (
+      <div>
+        <div style={{ fontSize: 11, fontWeight: 600, color: "#888", marginBottom: 2 }}>
+          {formatFieldName(fieldName)}
+        </div>
+        <div style={{ fontSize: 13 }}>{value || <span style={{ opacity: 0.4 }}>—</span>}</div>
+      </div>
+    );
+  }
+
+  // Handle string array
+  if (Array.isArray(value) && value.every((v) => typeof v === "string")) {
+    return (
+      <div>
+        <div style={{ fontSize: 11, fontWeight: 600, color: "#888", marginBottom: 4 }}>
+          {formatFieldName(fieldName)}
+        </div>
+        {value.length > 0 ? (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+            {value.map((item, i) => (
+              <span key={i} style={{ background: "#f0f0f0", padding: "2px 8px", borderRadius: 4, fontSize: 12 }}>
+                {item}
+              </span>
+            ))}
+          </div>
+        ) : (
+          <div style={{ fontSize: 12, opacity: 0.4 }}>—</div>
+        )}
+      </div>
+    );
+  }
+
+  // Handle nested object
+  if (typeof value === "object" && value !== null) {
+    return (
+      <div style={{ paddingLeft: 12, borderLeft: "2px solid #eee" }}>
+        <div style={{ fontSize: 11, fontWeight: 600, color: "#888", marginBottom: 6 }}>
+          {formatFieldName(fieldName)}
+        </div>
+        <div style={{ display: "grid", gap: 8 }}>
+          {Object.entries(value as Record<string, unknown>).map(([k, v]) => (
+            <NestedField key={k} fieldName={k} value={v} />
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <div style={{ fontSize: 11, fontWeight: 600, color: "#888", marginBottom: 2 }}>
+        {formatFieldName(fieldName)}
+      </div>
+      <div style={{ fontSize: 13 }}>{value === null ? "—" : String(value)}</div>
+    </div>
+  );
+}
+
+// Card for object items in arrays (like individual characters, locations)
+function ObjectCard({ data, index }: { data: Record<string, unknown>; index: number }) {
+  // Try to find a name/title field
+  const nameField = data.Name || data.name || data.Title || data.title || data.NameLabel || `Item ${index + 1}`;
+  const headline = data.Headline || data.headline || "";
+
+  // Check for lead image
+  const imagesObj = data.Images as Record<string, unknown> | undefined;
+  const leadImage = imagesObj?.LeadImage as { url: string } | undefined;
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+        {leadImage?.url && (
+          <img
+            src={leadImage.url}
+            alt={String(nameField)}
+            style={{ width: 48, height: 48, objectFit: "cover", borderRadius: 8, border: "1px solid #ddd" }}
+          />
+        )}
+        <div>
+          <div style={{ fontSize: 15, fontWeight: 700 }}>{String(nameField)}</div>
+          {headline && <div style={{ fontSize: 13, opacity: 0.7, marginTop: 2 }}>{String(headline)}</div>}
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))" }}>
+        {Object.entries(data)
+          .filter(([k]) => !["Name", "name", "Title", "title", "NameLabel", "Headline", "headline", "Images"].includes(k))
+          .map(([k, v]) => (
+            <NestedField key={k} fieldName={k} value={v} />
+          ))}
+      </div>
+    </div>
+  );
+}
+
 export default function Page() {
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -263,6 +551,9 @@ export default function Page() {
   const [schemaResultsDraft, setSchemaResultsDraft] = useState<string>("");
   const [schemaFillBusy, setSchemaFillBusy] = useState(false);
   const [schemaSaveBusy, setSchemaSaveBusy] = useState(false);
+  const [schemaResultsTab, setSchemaResultsTab] = useState<string>("OVERVIEW");
+  const [schemaResultsLevel, setSchemaResultsLevel] = useState<"L1" | "L2" | "L3">("L2");
+  const [schemaResultsViewMode, setSchemaResultsViewMode] = useState<"ui" | "json">("ui");
 
   function log(msg: string) {
     const ts = new Date().toLocaleTimeString();
@@ -1813,24 +2104,124 @@ export default function Page() {
           <div style={{ padding: "0 14px 14px 14px" }}>
             {schemaResultsDraft ? (
               <>
-                <textarea
-                  value={schemaResultsDraft}
-                  onChange={(e) => setSchemaResultsDraft(e.target.value)}
-                  style={{
-                    width: "100%",
-                    minHeight: 300,
-                    fontFamily: "monospace",
-                    fontSize: 12,
-                    padding: 10,
-                    border: "1px solid #ccc",
-                    borderRadius: 6,
-                    resize: "vertical",
-                    boxSizing: "border-box",
-                    display: "block",
-                    maxWidth: "100%"
-                  }}
-                />
-                <div style={{ marginTop: 10, display: "flex", gap: 10 }}>
+                {/* View mode toggle and controls */}
+                <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap", alignItems: "center" }}>
+                  <div style={{ display: "flex", gap: 4 }}>
+                    <button
+                      type="button"
+                      onClick={() => setSchemaResultsViewMode("ui")}
+                      style={{
+                        border: "1px solid #000",
+                        background: schemaResultsViewMode === "ui" ? "#000" : "#fff",
+                        color: schemaResultsViewMode === "ui" ? "#fff" : "#000",
+                        padding: "6px 12px",
+                        borderRadius: 8,
+                        fontSize: 12,
+                        fontWeight: 600
+                      }}
+                    >
+                      UI View
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSchemaResultsViewMode("json")}
+                      style={{
+                        border: "1px solid #000",
+                        background: schemaResultsViewMode === "json" ? "#000" : "#fff",
+                        color: schemaResultsViewMode === "json" ? "#fff" : "#000",
+                        padding: "6px 12px",
+                        borderRadius: 8,
+                        fontSize: 12,
+                        fontWeight: 600
+                      }}
+                    >
+                      Raw JSON
+                    </button>
+                  </div>
+
+                  {schemaResultsViewMode === "ui" && (
+                    <>
+                      <div style={{ width: 1, height: 24, background: "#ccc", margin: "0 8px" }} />
+                      
+                      {/* Level selector */}
+                      <div style={{ display: "flex", gap: 4 }}>
+                        {(["L1", "L2", "L3"] as const).map((level) => (
+                          <button
+                            key={level}
+                            type="button"
+                            onClick={() => setSchemaResultsLevel(level)}
+                            style={{
+                              border: "1px solid #000",
+                              background: schemaResultsLevel === level ? "#000" : "#fff",
+                              color: schemaResultsLevel === level ? "#fff" : "#000",
+                              padding: "6px 10px",
+                              borderRadius: 8,
+                              fontSize: 12,
+                              fontWeight: 600
+                            }}
+                          >
+                            {level}
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
+
+                {schemaResultsViewMode === "ui" && (
+                  <>
+                    {/* Domain tabs */}
+                    <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap" }}>
+                      {["OVERVIEW", "CHARACTERS", "WORLD", "LORE", "STYLE", "STORY"].map((domain) => (
+                        <button
+                          key={domain}
+                          type="button"
+                          onClick={() => setSchemaResultsTab(domain)}
+                          style={{
+                            border: "1px solid #000",
+                            background: schemaResultsTab === domain ? "#000" : "#fff",
+                            color: schemaResultsTab === domain ? "#fff" : "#000",
+                            padding: "8px 14px",
+                            borderRadius: 10,
+                            fontSize: 13,
+                            fontWeight: 600
+                          }}
+                        >
+                          {domain}
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Content cards */}
+                    <SchemaResultsUI
+                      jsonString={schemaResultsDraft}
+                      domain={schemaResultsTab}
+                      level={schemaResultsLevel}
+                    />
+                  </>
+                )}
+
+                {schemaResultsViewMode === "json" && (
+                  <textarea
+                    value={schemaResultsDraft}
+                    onChange={(e) => setSchemaResultsDraft(e.target.value)}
+                    style={{
+                      width: "100%",
+                      minHeight: 300,
+                      fontFamily: "monospace",
+                      fontSize: 12,
+                      padding: 10,
+                      border: "1px solid #ccc",
+                      borderRadius: 6,
+                      resize: "vertical",
+                      boxSizing: "border-box",
+                      display: "block",
+                      maxWidth: "100%"
+                    }}
+                  />
+                )}
+
+                <div style={{ marginTop: 12, display: "flex", gap: 10 }}>
                   <button
                     type="button"
                     disabled={schemaSaveBusy || schemaResultsDraft === schemaResults}

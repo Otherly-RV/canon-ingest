@@ -66,6 +66,18 @@ export type ProjectManifest = {
   schemaResults?: { url: string };
 };
 
+// Default IP Bible schema template
+const DEFAULT_SCHEMA = {
+  schemaId: "otherly-ipbible",
+  version: "0.1.1",
+  levels: ["L1", "L2", "L3"],
+  domains: ["OVERVIEW", "CHARACTERS", "WORLD", "LORE", "STYLE", "STORY"],
+  missingPolicy: {
+    rule: "Never invent missing info. Keep keys stable for UI/validation, but use empty/unknown values when source material does not support the field.",
+    defaults: { string: "Unknown", "string[]": [], object: {}, "object[]": [], asset: null, "asset[]": [] }
+  }
+};
+
 export function newManifest(projectId: string): ProjectManifest {
   return {
     projectId,
@@ -79,18 +91,7 @@ export function newManifest(projectId: string): ProjectManifest {
         null,
         2
       ),
-      schemaJson: JSON.stringify(
-        {
-          levels: {
-            L1: { description: "High-level overview" },
-            L2: { description: "Category breakdown" },
-            L3: { description: "Detailed entries" }
-          },
-          categories: ["OVERVIEW", "CHARACTERS", "WORLD", "LORE", "STYLE", "STORY"]
-        },
-        null,
-        2
-      )
+      schemaJson: JSON.stringify(DEFAULT_SCHEMA, null, 2)
     }
   };
 }
