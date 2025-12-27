@@ -957,6 +957,9 @@ export default function Page() {
   const [settingsHistory, setSettingsHistory] = useState<SettingsHistory>({});
   const [showHistoryPanel, setShowHistoryPanel] = useState<boolean>(false);
 
+  // Intro modal state
+  const [introOpen, setIntroOpen] = useState<boolean>(false);
+
   // AI Helper state
   type AiHelperMessage = { role: "user" | "assistant"; content: string };
   const [aiHelperOpen, setAiHelperOpen] = useState<boolean>(false);
@@ -2116,8 +2119,112 @@ export default function Page() {
 
   return (
     <div style={{ minHeight: "100vh", padding: 28 }}>
-      {/* Row 1: App name */}
-      <div style={{ fontSize: 22, fontWeight: 800, letterSpacing: -0.3 }}>OTHERLY — Ingest 1.0</div>
+      {/* Row 1: App name + Intro button */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div style={{ fontSize: 26, fontWeight: 800, letterSpacing: -0.3 }}>OTHERLY — Ingest 1.0</div>
+        <button
+          type="button"
+          onClick={() => setIntroOpen(true)}
+          style={{
+            border: "1px solid #000",
+            background: "#fff",
+            padding: "8px 16px",
+            borderRadius: 8,
+            fontSize: 14,
+            fontWeight: 600,
+            cursor: "pointer"
+          }}
+        >
+          Intro
+        </button>
+      </div>
+
+      {/* Intro Modal */}
+      {introOpen && (
+        <div
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: "rgba(0,0,0,0.5)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 9999
+          }}
+          onClick={() => setIntroOpen(false)}
+        >
+          <div
+            style={{
+              background: "#fff",
+              borderRadius: 16,
+              padding: 32,
+              maxWidth: 720,
+              maxHeight: "80vh",
+              overflow: "auto",
+              boxShadow: "0 25px 50px -12px rgba(0,0,0,0.25)"
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20 }}>
+              <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0 }}>Canon Ingest — IP Bible Digitization Tool</h1>
+              <button
+                type="button"
+                onClick={() => setIntroOpen(false)}
+                style={{
+                  border: "none",
+                  background: "transparent",
+                  fontSize: 24,
+                  cursor: "pointer",
+                  padding: 4,
+                  lineHeight: 1
+                }}
+              >
+                ×
+              </button>
+            </div>
+
+            <h2 style={{ fontSize: 18, fontWeight: 600, marginTop: 0, marginBottom: 12 }}>Overview</h2>
+            <p style={{ margin: "0 0 12px 0", lineHeight: 1.6 }}>
+              Canon Ingest is an AI-powered platform that transforms creative IP (Intellectual Property) documents—story bibles, scripts, pitch decks, and development materials—into structured, searchable, production-ready data.
+            </p>
+            <p style={{ margin: "0 0 20px 0", lineHeight: 1.6 }}>
+              This is a debug/testing app designed to evaluate different AI configurations and settings to determine the optimal setup for the OTHERLY PLATFORM.
+            </p>
+
+            <h2 style={{ fontSize: 18, fontWeight: 600, marginTop: 0, marginBottom: 12 }}>Workflow</h2>
+            <p style={{ margin: "0 0 12px 0", lineHeight: 1.6 }}>The app follows a strict sequential workflow:</p>
+            <ol style={{ margin: "0 0 20px 0", paddingLeft: 20, lineHeight: 1.8 }}>
+              <li><strong>Load Source</strong> — Upload PDF documents</li>
+              <li><strong>Process Text</strong> — Extract text content from pages</li>
+              <li><strong>View Text</strong> — Review extracted text</li>
+              <li><strong>Rasterize PNGs</strong> — Convert PDF pages to images</li>
+              <li><strong>Detect Images</strong> — AI identifies and crops images from pages</li>
+              <li><strong>Tag Assets</strong> — AI categorizes and labels extracted images</li>
+              <li><strong>Fill Schema</strong> — AI populates the structured data schema</li>
+              <li><strong>Completeness %</strong> — Review extraction quality score</li>
+            </ol>
+
+            <h2 style={{ fontSize: 18, fontWeight: 600, marginTop: 0, marginBottom: 12 }}>How to Use</h2>
+            <ul style={{ margin: "0 0 20px 0", paddingLeft: 20, lineHeight: 1.8 }}>
+              <li><strong>Follow the numbered order:</strong> Each step should be activated and verified in sequence before proceeding.</li>
+              <li><strong>Steps 5–8 can be skipped,</strong> but results in subsequent stages will be less effective.</li>
+              <li><strong>Re-running a step</strong> will update that field&apos;s results, but downstream steps must be re-run to reflect those changes.</li>
+              <li><strong>AI Helper:</strong> A chatbot is available to assist with writing JSON instructions for settings.</li>
+              <li><strong>Save your work:</strong> Use the &quot;Save Version&quot; button to create snapshots of your JSON settings. This preserves your configurations and allows others to work with the app without losing information.</li>
+            </ul>
+
+            <h2 style={{ fontSize: 18, fontWeight: 600, marginTop: 0, marginBottom: 12, color: "#c00" }}>Known Bugs</h2>
+            <ul style={{ margin: "0 0 12px 0", paddingLeft: 20, lineHeight: 1.8 }}>
+              <li>The Save and Delete buttons sometimes require multiple clicks (you may need to re-paste your content before saving).</li>
+              <li>To reliably save JSON settings: click &quot;Save Version&quot; first, then click the black &quot;Save&quot; button on the right.</li>
+              <li>This is a known issue with Vercel Blob storage. As an internal testing app, this is acceptable for now—we plan to fix it soon.</li>
+            </ul>
+          </div>
+        </div>
+      )}
 
       {/* Row 2: Main workflow buttons */}
       <div style={{ marginTop: 18, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
