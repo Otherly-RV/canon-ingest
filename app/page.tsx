@@ -912,17 +912,24 @@ function ObjectCard({
   index: number;
   colors: { bg: string; accent: string; light: string };
 }) {
-  // Try to find a name/title field
-  const nameField = data.Name || data.name || data.Title || data.title || data.NameLabel || `Item ${index + 1}`;
-  const headline = data.Headline || data.headline || "";
-  const role = data.Role || data.role || "";
+  // Try to find a name/title field - check many common patterns
+  const nameField = data.Name || data.name || data.Title || data.title || data.NameLabel || 
+    data.EventTitle || data.ArcName || data.EpisodeId || data.Character || 
+    data.Label || data.label || `Item ${index + 1}`;
+  const headline = data.Headline || data.headline || data.Summary || data.summary || 
+    data.Logline || data.logline || "";
+  const role = data.Role || data.role || data.RoleType || data.TimeMarker || "";
 
   // Check for lead image
   const imagesObj = data.Images as Record<string, unknown> | undefined;
   const leadImage = imagesObj?.LeadImage as { url: string } | undefined;
 
-  // Group fields into sections for better organization
-  const skipFields = ["Name", "name", "Title", "title", "NameLabel", "Headline", "headline", "Images", "Role", "role"];
+  // Group fields into sections for better organization - skip fields already shown in header
+  const skipFields = [
+    "Name", "name", "Title", "title", "NameLabel", "EventTitle", "ArcName", "EpisodeId", "Character", "Label", "label",
+    "Headline", "headline", "Summary", "summary", "Logline", "logline",
+    "Images", "Role", "role", "RoleType", "TimeMarker"
+  ];
 
   return (
     <div style={{ padding: 20 }}>
