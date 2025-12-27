@@ -6,6 +6,7 @@ export type ProjectSettings = {
   taggingJson: string;
   schemaJson: string;
   completenessRules?: string;
+  detectionRulesJson?: string;
 };
 
 export type AssetBBox = {

@@ -37,6 +37,7 @@ type Manifest = {
     taggingJson: string;
     schemaJson: string;
     completenessRules?: string;
+    detectionRulesJson?: string;
   };
 };
 
@@ -164,8 +165,8 @@ function Tabs({
   value,
   onChange
 }: {
-  value: "ai" | "tagging" | "schema" | "completeness";
-  onChange: (v: "ai" | "tagging" | "schema" | "completeness") => void;
+  value: "ai" | "tagging" | "schema" | "completeness" | "detection";
+  onChange: (v: "ai" | "tagging" | "schema" | "completeness" | "detection") => void;
 }) {
   const tabStyle = (active: boolean): React.CSSProperties => ({
     border: "1px solid #000",
@@ -201,6 +202,9 @@ function Tabs({
       </button>
       <button type="button" onClick={() => onChange("completeness")} style={tabStyle(value === "completeness")}>
         Completeness
+      </button>
+      <button type="button" onClick={() => onChange("detection")} style={tabStyle(value === "detection")}>
+        Detection
       </button>
     </div>
   );
@@ -831,7 +835,7 @@ export default function Page() {
   const [projects, setProjects] = useState<ProjectRow[]>([]);
 
   const [settingsOpen, setSettingsOpen] = useState(true);
-  const [settingsTab, setSettingsTab] = useState<"ai" | "tagging" | "schema" | "completeness">("ai");
+  const [settingsTab, setSettingsTab] = useState<"ai" | "tagging" | "schema" | "completeness" | "detection">("ai");
   const [settingsBusy, setSettingsBusy] = useState(false);
   const [settingsError, setSettingsError] = useState<string>("");
 
@@ -839,6 +843,7 @@ export default function Page() {
   const [taggingJsonDraft, setTaggingJsonDraft] = useState<string>("");
   const [schemaJsonDraft, setSchemaJsonDraft] = useState<string>("");
   const [completenessRulesDraft, setCompletenessRulesDraft] = useState<string>("");
+  const [detectionRulesJsonDraft, setDetectionRulesJsonDraft] = useState<string>("");
 
   const [rasterProgress, setRasterProgress] = useState({
     running: false,
@@ -912,6 +917,7 @@ export default function Page() {
     setTaggingJsonDraft(m.settings?.taggingJson ?? "");
     setSchemaJsonDraft(m.settings?.schemaJson ?? "");
     setCompletenessRulesDraft(m.settings?.completenessRules ?? "");
+    setDetectionRulesJsonDraft(m.settings?.detectionRulesJson ?? "");
 
     // Load cached formatted text if available
     if (m.formattedText?.url) {
@@ -1215,6 +1221,16 @@ export default function Page() {
 
     const pages = manifest.pages;
 
+    // Parse detection rules from settings
+    let detectionRules: object | undefined;
+    if (detectionRulesJsonDraft.trim()) {
+      try {
+        detectionRules = JSON.parse(detectionRulesJsonDraft) as object;
+      } catch {
+        return setLastError("Invalid Detection Rules JSON");
+      }
+    }
+
     setBusy("Detecting images...");
     setSplitProgress({ running: true, page: 0, totalPages: pages.length, assetsUploaded: 0 });
     log("Starting image detection with Gemini...");
@@ -1231,7 +1247,8 @@ export default function Page() {
           body: JSON.stringify({
             pageUrl: page.url,
             pageWidth: page.width,
-            pageHeight: page.height
+            pageHeight: page.height,
+            detectionRules
           })
         });
 
@@ -1240,7 +1257,7 @@ export default function Page() {
           continue;
         }
 
-        const detected = (await detectRes.json()) as { boxes?: Array<{ x: number; y: number; width: number; height: number }>; error?: string };
+        const detected = (await detectRes.json()) as { boxes?: Array<{ x: number; y: number; width: number; height: number; category?: string }>; error?: string };
         const boxes = detected.boxes ?? [];
         log(`Found ${boxes.length} images on page ${page.pageNumber}`);
 
@@ -1580,6 +1597,16 @@ export default function Page() {
       }
     }
 
+    // Validate detectionRulesJson is valid JSON (if not empty)
+    if (detectionRulesJsonDraft.trim()) {
+      try {
+        JSON.parse(detectionRulesJsonDraft);
+      } catch {
+        setSettingsError("Detection Rules JSON is invalid.");
+        return;
+      }
+    }
+
     setSettingsBusy(true);
     try {
       const r = await fetch("/api/projects/settings/save", {
@@ -1591,7 +1618,8 @@ export default function Page() {
           aiRules: aiRulesDraft,
           taggingJson: taggingJsonDraft,
           schemaJson: schemaJsonDraft,
-          completenessRules: completenessRulesDraft
+          completenessRules: completenessRulesDraft,
+          detectionRulesJson: detectionRulesJsonDraft
         })
       });
 
@@ -1947,6 +1975,7 @@ export default function Page() {
           disabled={!schemaResultsDraft}
           onClick={() => {
             if (!schemaResultsDraft) return;
+            // Always recalculate on click
             try {
               const parsed = JSON.parse(schemaResultsDraft);
               const levelData = parsed[schemaResultsLevel] || parsed["L2"] || {};
@@ -2314,6 +2343,38 @@ export default function Page() {
                       width: "100%",
                       maxWidth: "100%",
                       minHeight: 180,
+                      border: "1px solid rgba(0,0,0,0.35)",
+                      borderRadius: 12,
+                      padding: 12,
+                      fontSize: 13,
+                      fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                      boxSizing: "border-box",
+                      display: "block"
+                    }}
+                  />
+                </div>
+              )}
+              {settingsTab === "detection" && (
+                <div>
+                  <div style={{ marginBottom: 10, fontSize: 12, color: "#666" }}>
+                    Rules for image detection &amp; cropping in step 5. Controls what to extract, size thresholds, and crop behavior.
+                  </div>
+                  <textarea
+                    value={detectionRulesJsonDraft}
+                    onChange={(e) => setDetectionRulesJsonDraft(e.target.value)}
+                    placeholder={`{
+  "targets": ["characters", "locations", "keyArt", "logos", "diagrams"],
+  "ignore": ["decorativeBorders", "pageNumbers", "watermarks", "tinyIcons"],
+  "minimumSize": { "width": 80, "height": 80 },
+  "qualityThreshold": 0.6,
+  "cropPadding": { "default": 5, "characters": 10 },
+  "preferFullBleed": ["locations", "keyArt"],
+  "autoCategory": true
+}`}
+                    style={{
+                      width: "100%",
+                      maxWidth: "100%",
+                      minHeight: 200,
                       border: "1px solid rgba(0,0,0,0.35)",
                       borderRadius: 12,
                       padding: 12,
