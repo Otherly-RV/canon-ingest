@@ -13,6 +13,20 @@ type PageAsset = {
   tagRationale?: string;
 };
 
+type SettingsHistoryEntry = {
+  timestamp: string;
+  label?: string;
+  content: string;
+};
+
+type SettingsHistory = {
+  aiRules?: SettingsHistoryEntry[];
+  taggingJson?: SettingsHistoryEntry[];
+  schemaJson?: SettingsHistoryEntry[];
+  completenessRules?: SettingsHistoryEntry[];
+  detectionRulesJson?: SettingsHistoryEntry[];
+};
+
 type Manifest = {
   projectId: string;
   createdAt: string;
@@ -38,6 +52,7 @@ type Manifest = {
     schemaJson: string;
     completenessRules?: string;
     detectionRulesJson?: string;
+    history?: SettingsHistory;
   };
 };
 
@@ -845,6 +860,10 @@ export default function Page() {
   const [completenessRulesDraft, setCompletenessRulesDraft] = useState<string>("");
   const [detectionRulesJsonDraft, setDetectionRulesJsonDraft] = useState<string>("");
 
+  // Settings history state
+  const [settingsHistory, setSettingsHistory] = useState<SettingsHistory>({});
+  const [showHistoryPanel, setShowHistoryPanel] = useState<boolean>(false);
+
   const [rasterProgress, setRasterProgress] = useState({
     running: false,
     currentPage: 0,
@@ -899,6 +918,73 @@ export default function Page() {
     setDebugLog((prev) => [...prev.slice(-99), `[${ts}] ${msg}`]);
   }
 
+  // Helper to get current content for a settings tab
+  function getCurrentSettingsContent(tab: typeof settingsTab): string {
+    switch (tab) {
+      case "ai": return aiRulesDraft;
+      case "tagging": return taggingJsonDraft;
+      case "schema": return schemaJsonDraft;
+      case "completeness": return completenessRulesDraft;
+      case "detection": return detectionRulesJsonDraft;
+      default: return "";
+    }
+  }
+
+  // Helper to get history key for a settings tab
+  function getHistoryKey(tab: typeof settingsTab): keyof SettingsHistory {
+    switch (tab) {
+      case "ai": return "aiRules";
+      case "tagging": return "taggingJson";
+      case "schema": return "schemaJson";
+      case "completeness": return "completenessRules";
+      case "detection": return "detectionRulesJson";
+      default: return "aiRules";
+    }
+  }
+
+  // Save current content as a version snapshot
+  function saveVersionSnapshot(label?: string) {
+    const content = getCurrentSettingsContent(settingsTab);
+    if (!content.trim()) return;
+
+    const key = getHistoryKey(settingsTab);
+    const entry: SettingsHistoryEntry = {
+      timestamp: new Date().toISOString(),
+      label: label || undefined,
+      content
+    };
+
+    setSettingsHistory((prev) => {
+      const existing = prev[key] ?? [];
+      // Keep max 20 versions per tab
+      const updated = [entry, ...existing].slice(0, 20);
+      return { ...prev, [key]: updated };
+    });
+  }
+
+  // Restore a version from history
+  function restoreVersion(entry: SettingsHistoryEntry) {
+    const content = entry.content;
+    switch (settingsTab) {
+      case "ai": setAiRulesDraft(content); break;
+      case "tagging": setTaggingJsonDraft(content); break;
+      case "schema": setSchemaJsonDraft(content); break;
+      case "completeness": setCompletenessRulesDraft(content); break;
+      case "detection": setDetectionRulesJsonDraft(content); break;
+    }
+    setShowHistoryPanel(false);
+  }
+
+  // Delete a version from history
+  function deleteVersion(index: number) {
+    const key = getHistoryKey(settingsTab);
+    setSettingsHistory((prev) => {
+      const existing = prev[key] ?? [];
+      const updated = existing.filter((_, i) => i !== index);
+      return { ...prev, [key]: updated };
+    });
+  }
+
   async function loadManifest(url: string) {
     const mRes = await fetch("/api/projects/manifest/read", {
       method: "POST",
@@ -918,6 +1004,7 @@ export default function Page() {
     setSchemaJsonDraft(m.settings?.schemaJson ?? "");
     setCompletenessRulesDraft(m.settings?.completenessRules ?? "");
     setDetectionRulesJsonDraft(m.settings?.detectionRulesJson ?? "");
+    setSettingsHistory(m.settings?.history ?? {});
 
     // Load cached formatted text if available
     if (m.formattedText?.url) {
@@ -1619,7 +1706,8 @@ export default function Page() {
           taggingJson: taggingJsonDraft,
           schemaJson: schemaJsonDraft,
           completenessRules: completenessRulesDraft,
-          detectionRulesJson: detectionRulesJsonDraft
+          detectionRulesJson: detectionRulesJsonDraft,
+          history: settingsHistory
         })
       });
 
@@ -2255,6 +2343,117 @@ export default function Page() {
                 {settingsBusy ? "Saving..." : "Save"}
               </button>
             </div>
+
+            {/* Version History Controls */}
+            <div style={{ display: "flex", gap: 8, marginTop: 10, alignItems: "center" }}>
+              <button
+                type="button"
+                onClick={() => saveVersionSnapshot()}
+                disabled={!getCurrentSettingsContent(settingsTab).trim()}
+                style={{
+                  border: "1px solid #000",
+                  background: "#fff",
+                  padding: "6px 10px",
+                  borderRadius: 8,
+                  fontSize: 12,
+                  cursor: getCurrentSettingsContent(settingsTab).trim() ? "pointer" : "not-allowed",
+                  opacity: getCurrentSettingsContent(settingsTab).trim() ? 1 : 0.5
+                }}
+              >
+                📸 Save Version
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowHistoryPanel((v) => !v)}
+                style={{
+                  border: "1px solid #000",
+                  background: showHistoryPanel ? "#eee" : "#fff",
+                  padding: "6px 10px",
+                  borderRadius: 8,
+                  fontSize: 12,
+                  cursor: "pointer"
+                }}
+              >
+                📜 History ({(settingsHistory[getHistoryKey(settingsTab)] ?? []).length})
+              </button>
+            </div>
+
+            {/* History Panel */}
+            {showHistoryPanel && (
+              <div style={{
+                marginTop: 10,
+                border: "1px solid rgba(0,0,0,0.3)",
+                borderRadius: 10,
+                padding: 10,
+                maxHeight: 200,
+                overflowY: "auto",
+                background: "#fafafa"
+              }}>
+                <div style={{ fontWeight: 700, fontSize: 12, marginBottom: 8 }}>
+                  Version History — {settingsTab.charAt(0).toUpperCase() + settingsTab.slice(1)}
+                </div>
+                {(settingsHistory[getHistoryKey(settingsTab)] ?? []).length === 0 ? (
+                  <div style={{ fontSize: 12, color: "#666" }}>No saved versions yet. Click &quot;Save Version&quot; to create a snapshot.</div>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    {(settingsHistory[getHistoryKey(settingsTab)] ?? []).map((entry, i) => (
+                      <div key={i} style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        padding: "6px 8px",
+                        background: "#fff",
+                        border: "1px solid rgba(0,0,0,0.15)",
+                        borderRadius: 6,
+                        fontSize: 12
+                      }}>
+                        <div style={{ flex: 1 }}>
+                          <span style={{ fontWeight: 600 }}>
+                            {new Date(entry.timestamp).toLocaleString()}
+                          </span>
+                          {entry.label && <span style={{ marginLeft: 8, color: "#666" }}>({entry.label})</span>}
+                          <div style={{ fontSize: 11, color: "#888", marginTop: 2 }}>
+                            {entry.content.length} chars
+                          </div>
+                        </div>
+                        <div style={{ display: "flex", gap: 4 }}>
+                          <button
+                            type="button"
+                            onClick={() => restoreVersion(entry)}
+                            style={{
+                              border: "1px solid #000",
+                              background: "#000",
+                              color: "#fff",
+                              padding: "4px 8px",
+                              borderRadius: 6,
+                              fontSize: 11,
+                              cursor: "pointer"
+                            }}
+                          >
+                            Restore
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => deleteVersion(i)}
+                            style={{
+                              border: "1px solid #c00",
+                              background: "#fff",
+                              color: "#c00",
+                              padding: "4px 8px",
+                              borderRadius: 6,
+                              fontSize: 11,
+                              cursor: "pointer"
+                            }}
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
 
             {settingsError && (
               <div style={{ marginTop: 10, border: "1px solid #000", borderRadius: 12, padding: 10 }}>

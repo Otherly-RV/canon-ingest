@@ -1,5 +1,19 @@
 import { put, head } from "@vercel/blob";
 
+export type SettingsHistoryEntry = {
+  timestamp: string;
+  label?: string;
+  content: string;
+};
+
+export type SettingsHistory = {
+  aiRules?: SettingsHistoryEntry[];
+  taggingJson?: SettingsHistoryEntry[];
+  schemaJson?: SettingsHistoryEntry[];
+  completenessRules?: SettingsHistoryEntry[];
+  detectionRulesJson?: SettingsHistoryEntry[];
+};
+
 export type ProjectSettings = {
   aiRules: string;
   uiFieldsJson: string;
@@ -7,6 +21,7 @@ export type ProjectSettings = {
   schemaJson: string;
   completenessRules?: string;
   detectionRulesJson?: string;
+  history?: SettingsHistory;
 };
 
 export type AssetBBox = {

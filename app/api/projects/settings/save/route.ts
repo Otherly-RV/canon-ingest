@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { saveManifest, fetchManifestDirect, type ProjectManifest } from "@/app/lib/manifest";
+import { saveManifest, fetchManifestDirect, type ProjectManifest, type SettingsHistory } from "@/app/lib/manifest";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -12,6 +12,7 @@ type Body = {
   schemaJson?: string;
   completenessRules?: string;
   detectionRulesJson?: string;
+  history?: SettingsHistory;
 };
 
 export async function POST(req: Request): Promise<Response> {
@@ -92,6 +93,7 @@ export async function POST(req: Request): Promise<Response> {
   if (typeof body.schemaJson === "string") latest.settings.schemaJson = body.schemaJson;
   if (typeof body.completenessRules === "string") latest.settings.completenessRules = body.completenessRules;
   if (typeof body.detectionRulesJson === "string") latest.settings.detectionRulesJson = body.detectionRulesJson;
+  if (body.history) latest.settings.history = body.history;
 
   const newManifestUrl = await saveManifest(latest);
 
