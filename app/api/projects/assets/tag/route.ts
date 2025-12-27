@@ -333,6 +333,9 @@ export async function POST(req: Request): Promise<Response> {
     }
     // Default to a modern model name; you can override via env
     const GEMINI_DETECT_MODEL = optEnv("GEMINI_DETECT_MODEL", "gemini-2.0-flash");
+    
+    // Log model being used for debugging
+    console.log(`[tag] Using model: ${GEMINI_DETECT_MODEL}`);
 
     // NOTE: We will *not* save this manifest directly at the end.
     // Tagging can take time, and the user may delete assets while it's running.
