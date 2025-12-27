@@ -10,6 +10,7 @@ type Body = {
   aiRules?: string;
   taggingJson?: string;
   schemaJson?: string;
+  completenessRules?: string;
 };
 
 export async function POST(req: Request): Promise<Response> {
@@ -45,6 +46,15 @@ export async function POST(req: Request): Promise<Response> {
     }
   }
 
+  // If provided and non-empty, enforce completenessRules is valid JSON before saving
+  if (typeof body.completenessRules === "string" && body.completenessRules.trim()) {
+    try {
+      JSON.parse(body.completenessRules);
+    } catch {
+      return NextResponse.json({ ok: false, error: "completenessRules is not valid JSON" }, { status: 400 });
+    }
+  }
+
   let manifest: ProjectManifest;
   try {
     manifest = await fetchManifestDirect(manifestUrlRaw);
@@ -64,12 +74,13 @@ export async function POST(req: Request): Promise<Response> {
   }
 
   if (!latest.settings) {
-    latest.settings = { aiRules: "", uiFieldsJson: "{}", taggingJson: "{}", schemaJson: "{}" };
+    latest.settings = { aiRules: "", uiFieldsJson: "{}", taggingJson: "{}", schemaJson: "{}", completenessRules: "{}" };
   }
 
   if (typeof body.aiRules === "string") latest.settings.aiRules = body.aiRules;
   if (typeof body.taggingJson === "string") latest.settings.taggingJson = body.taggingJson;
   if (typeof body.schemaJson === "string") latest.settings.schemaJson = body.schemaJson;
+  if (typeof body.completenessRules === "string") latest.settings.completenessRules = body.completenessRules;
 
   const newManifestUrl = await saveManifest(latest);
 

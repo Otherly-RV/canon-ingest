@@ -36,6 +36,7 @@ type Manifest = {
     uiFieldsJson: string;
     taggingJson: string;
     schemaJson: string;
+    completenessRules?: string;
   };
 };
 
@@ -163,8 +164,8 @@ function Tabs({
   value,
   onChange
 }: {
-  value: "ai" | "tagging" | "schema";
-  onChange: (v: "ai" | "tagging" | "schema") => void;
+  value: "ai" | "tagging" | "schema" | "completeness";
+  onChange: (v: "ai" | "tagging" | "schema" | "completeness") => void;
 }) {
   const tabStyle = (active: boolean): React.CSSProperties => ({
     border: "1px solid #000",
@@ -198,8 +199,97 @@ function Tabs({
       <button type="button" onClick={() => onChange("tagging")} style={tabStyle(value === "tagging")}>
         Tagging JSON
       </button>
+      <button type="button" onClick={() => onChange("completeness")} style={tabStyle(value === "completeness")}>
+        Completeness
+      </button>
     </div>
   );
+}
+
+// Completeness calculation helper
+function calculateCompleteness(
+  schemaData: Record<string, unknown>,
+  completenessRules: string
+): { overall: number; byDomain: Record<string, number>; alert: { color: string; message: string } } {
+  const domains = ["OVERVIEW", "CHARACTERS", "WORLD", "LORE", "STYLE", "STORY"];
+  const byDomain: Record<string, number> = {};
+  
+  // Parse custom rules if provided
+  let customWeights: Record<string, number> = {};
+  try {
+    if (completenessRules.trim()) {
+      const parsed = JSON.parse(completenessRules);
+      if (parsed.weights) customWeights = parsed.weights;
+    }
+  } catch {
+    // Use defaults if parsing fails
+  }
+
+  // Calculate per-domain completeness
+  for (const domain of domains) {
+    const domainData = schemaData[domain];
+    if (!domainData || typeof domainData !== "object") {
+      byDomain[domain] = 0;
+      continue;
+    }
+
+    const fields = Object.entries(domainData as Record<string, unknown>);
+    if (fields.length === 0) {
+      byDomain[domain] = 0;
+      continue;
+    }
+
+    let filledCount = 0;
+    let totalWeight = 0;
+    let filledWeight = 0;
+
+    for (const [key, val] of fields) {
+      const weight = customWeights[`${domain}.${key}`] || 1;
+      totalWeight += weight;
+      
+      const isFilled = val !== null && val !== undefined && val !== "" && 
+        !(Array.isArray(val) && val.length === 0) &&
+        !(typeof val === "object" && !Array.isArray(val) && Object.keys(val).length === 0);
+      
+      if (isFilled) {
+        filledCount++;
+        filledWeight += weight;
+      }
+    }
+
+    byDomain[domain] = totalWeight > 0 ? Math.round((filledWeight / totalWeight) * 100) : 0;
+  }
+
+  // Calculate overall with domain weights
+  const domainWeights: Record<string, number> = {
+    OVERVIEW: customWeights.OVERVIEW || 20,
+    CHARACTERS: customWeights.CHARACTERS || 20,
+    WORLD: customWeights.WORLD || 15,
+    LORE: customWeights.LORE || 15,
+    STYLE: customWeights.STYLE || 15,
+    STORY: customWeights.STORY || 15
+  };
+  
+  let weightedSum = 0;
+  let totalDomainWeight = 0;
+  for (const domain of domains) {
+    const w = domainWeights[domain];
+    weightedSum += byDomain[domain] * w;
+    totalDomainWeight += w;
+  }
+  const overall = totalDomainWeight > 0 ? Math.round(weightedSum / totalDomainWeight) : 0;
+
+  // Determine alert
+  let alert = { color: "#22c55e", message: "Baseline is production-ready" };
+  if (overall < 50) {
+    alert = { color: "#ef4444", message: "Insufficient baseline — upload more sources or fill key fields" };
+  } else if (overall < 70) {
+    alert = { color: "#f97316", message: "Review before production — address missing fields" };
+  } else if (overall < 80) {
+    alert = { color: "#eab308", message: "Minor additions recommended" };
+  }
+
+  return { overall, byDomain, alert };
 }
 
 // Domain colors for visual differentiation
@@ -741,13 +831,14 @@ export default function Page() {
   const [projects, setProjects] = useState<ProjectRow[]>([]);
 
   const [settingsOpen, setSettingsOpen] = useState(true);
-  const [settingsTab, setSettingsTab] = useState<"ai" | "tagging" | "schema">("ai");
+  const [settingsTab, setSettingsTab] = useState<"ai" | "tagging" | "schema" | "completeness">("ai");
   const [settingsBusy, setSettingsBusy] = useState(false);
   const [settingsError, setSettingsError] = useState<string>("");
 
   const [aiRulesDraft, setAiRulesDraft] = useState<string>("");
   const [taggingJsonDraft, setTaggingJsonDraft] = useState<string>("");
   const [schemaJsonDraft, setSchemaJsonDraft] = useState<string>("");
+  const [completenessRulesDraft, setCompletenessRulesDraft] = useState<string>("");
 
   const [rasterProgress, setRasterProgress] = useState({
     running: false,
@@ -812,6 +903,7 @@ export default function Page() {
     setAiRulesDraft(m.settings?.aiRules ?? "");
     setTaggingJsonDraft(m.settings?.taggingJson ?? "");
     setSchemaJsonDraft(m.settings?.schemaJson ?? "");
+    setCompletenessRulesDraft(m.settings?.completenessRules ?? "");
 
     // Load cached formatted text if available
     if (m.formattedText?.url) {
@@ -1470,6 +1562,16 @@ export default function Page() {
       }
     }
 
+    // Validate completenessRules is valid JSON (if not empty)
+    if (completenessRulesDraft.trim()) {
+      try {
+        JSON.parse(completenessRulesDraft);
+      } catch {
+        setSettingsError("Completeness Rules JSON is invalid.");
+        return;
+      }
+    }
+
     setSettingsBusy(true);
     try {
       const r = await fetch("/api/projects/settings/save", {
@@ -1480,7 +1582,8 @@ export default function Page() {
           manifestUrl,
           aiRules: aiRulesDraft,
           taggingJson: taggingJsonDraft,
-          schemaJson: schemaJsonDraft
+          schemaJson: schemaJsonDraft,
+          completenessRules: completenessRulesDraft
         })
       });
 
@@ -2138,6 +2241,39 @@ export default function Page() {
                   }}
                 />
               )}
+              {settingsTab === "completeness" && (
+                <div>
+                  <div style={{ marginBottom: 10, fontSize: 12, color: "#666" }}>
+                    Define weights for calculating schema completeness. Format: <code>{`{"weights": {"OVERVIEW": 20, "CHARACTERS": 20, ...}, "OVERVIEW.IPTitle": 10, ...}`}</code>
+                  </div>
+                  <textarea
+                    value={completenessRulesDraft}
+                    onChange={(e) => setCompletenessRulesDraft(e.target.value)}
+                    placeholder={`{
+  "weights": {
+    "OVERVIEW": 20,
+    "CHARACTERS": 20,
+    "WORLD": 15,
+    "LORE": 15,
+    "STYLE": 15,
+    "STORY": 15
+  }
+}`}
+                    style={{
+                      width: "100%",
+                      maxWidth: "100%",
+                      minHeight: 180,
+                      border: "1px solid rgba(0,0,0,0.35)",
+                      borderRadius: 12,
+                      padding: 12,
+                      fontSize: 13,
+                      fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                      boxSizing: "border-box",
+                      display: "block"
+                    }}
+                  />
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -2416,6 +2552,77 @@ export default function Page() {
 
                 {schemaResultsViewMode === "ui" && (
                   <>
+                    {/* Completeness Score Bar */}
+                    {(() => {
+                      try {
+                        const parsed = schemaResultsDraft ? JSON.parse(schemaResultsDraft) : {};
+                        const levelData = parsed[schemaResultsLevel] || {};
+                        const completeness = calculateCompleteness(levelData, completenessRulesDraft);
+                        return (
+                          <div style={{ 
+                            marginBottom: 16, 
+                            padding: "12px 16px", 
+                            background: "#f8fafc", 
+                            borderRadius: 12,
+                            border: "1px solid #e2e8f0"
+                          }}>
+                            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                                <span style={{ fontWeight: 700, fontSize: 14 }}>Completeness</span>
+                                <span style={{ 
+                                  fontSize: 24, 
+                                  fontWeight: 800, 
+                                  color: completeness.alert.color 
+                                }}>
+                                  {completeness.overall}%
+                                </span>
+                              </div>
+                              <span style={{ 
+                                fontSize: 12, 
+                                padding: "4px 10px", 
+                                borderRadius: 12, 
+                                background: completeness.alert.color + "20",
+                                color: completeness.alert.color,
+                                fontWeight: 600
+                              }}>
+                                {completeness.alert.message}
+                              </span>
+                            </div>
+                            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                              {Object.entries(completeness.byDomain).map(([domain, pct]) => {
+                                const colors = DOMAIN_COLORS[domain];
+                                return (
+                                  <div 
+                                    key={domain} 
+                                    style={{ 
+                                      display: "flex", 
+                                      alignItems: "center", 
+                                      gap: 6,
+                                      padding: "4px 10px",
+                                      borderRadius: 8,
+                                      background: colors?.bg || "#f1f5f9",
+                                      border: `1px solid ${colors?.accent || "#94a3b8"}30`
+                                    }}
+                                  >
+                                    <span style={{ fontSize: 11, color: colors?.accent || "#64748b" }}>{domain}</span>
+                                    <span style={{ 
+                                      fontSize: 12, 
+                                      fontWeight: 700, 
+                                      color: pct >= 80 ? "#22c55e" : pct >= 50 ? "#eab308" : "#ef4444"
+                                    }}>
+                                      {pct}%
+                                    </span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        );
+                      } catch {
+                        return null;
+                      }
+                    })()}
+
                     {/* Domain tabs */}
                     <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
                       {(["OVERVIEW", "CHARACTERS", "WORLD", "LORE", "STYLE", "STORY"] as const).map((domain) => {

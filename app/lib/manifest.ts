@@ -5,6 +5,7 @@ export type ProjectSettings = {
   uiFieldsJson: string;
   taggingJson: string;
   schemaJson: string;
+  completenessRules?: string;
 };
 
 export type AssetBBox = {
